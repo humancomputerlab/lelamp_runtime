@@ -215,9 +215,27 @@ class LeLampFollower(Robot):
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
+        # --- 插值算法开始 ---
+        # 机械臂平滑移动到目标点
+        interp_steps = getattr(self.config, "interp_steps", 10)  # 默认步数10
+        interp_delay = getattr(self.config, "interp_delay", 0.01)  # 每步延时10ms
 
-        # Send goal position to the arm
-        self.bus.sync_write("Goal_Position", goal_pos)
+        present_pos = self.bus.sync_read("Present_Position")
+
+        # 线性插值步骤生成
+        motors = list(goal_pos.keys())
+        start_pos = [present_pos[motor] for motor in motors]
+        end_pos = [goal_pos[motor] for motor in motors]
+
+        # 对每个步生成中间目标，并发送
+        for step in range(1, interp_steps + 1):
+            ratio = step / interp_steps
+            mid_pos = {motor: start + (end - start) * ratio for motor, start, end in zip(motors, start_pos, end_pos)}
+            self.bus.sync_write("Goal_Position", mid_pos)
+            time.sleep(interp_delay)
+        # --- 插值算法结束 ---
+
+        # 最后返回实际发出的动作
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     def disconnect(self):
