@@ -61,21 +61,33 @@ def main():
     parser = argparse.ArgumentParser(description="Calibrate LeLamp robot follower and leader sequentially")
     parser.add_argument('--id', type=str, required=True, help='ID of the lamp')
     parser.add_argument('--port', type=str, required=True, help='Serial port for the lamp')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--follower-only', dest='follower_only', action='store_true', help='Only run follower calibration')
+    group.add_argument('--leader-only', dest='leader_only', action='store_true', help='Only run leader calibration')
     args = parser.parse_args()
     
-    if args.follower_only and args.leader_only:
-        raise ValueError("Cannot specify both --follower-only and --leader-only")
-    
     try:
-        print("\n" + "="*50)
-        print("FOLLOWER CALIBRATION")
-        print("="*50)
-        calibrate_follower(args.id, args.port)
-        
-        print("\n" + "="*50)
-        print("LEADER CALIBRATION")
-        print("="*50)
-        calibrate_leader(args.id, args.port)
+        # Run according to requested mode
+        if args.follower_only:
+            print("\n" + "="*50)
+            print("FOLLOWER CALIBRATION (only)")
+            print("="*50)
+            calibrate_follower(args.id, args.port)
+        elif args.leader_only:
+            print("\n" + "="*50)
+            print("LEADER CALIBRATION (only)")
+            print("="*50)
+            calibrate_leader(args.id, args.port)
+        else:
+            print("\n" + "="*50)
+            print("FOLLOWER CALIBRATION")
+            print("="*50)
+            calibrate_follower(args.id, args.port)
+            
+            print("\n" + "="*50)
+            print("LEADER CALIBRATION")
+            print("="*50)
+            calibrate_leader(args.id, args.port)
             
         print("\n" + "="*50)
         print("CALIBRATION COMPLETED SUCCESSFULLY")
