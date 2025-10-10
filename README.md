@@ -59,10 +59,10 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 3. Install dependencies:
 
 ```bash
-# For basic functionality
+# If on your personal computer
 uv sync
 
-# For hardware support (Raspberry Pi)
+# If on Raspberry Pi
 uv sync --extra hardware
 ```
 
@@ -94,11 +94,13 @@ The runtime includes several key dependencies:
 
 ## Core Functionality
 
+Prior to following the instructions here, you should have an overview of how to control LeLamp through [this tutorial](https://github.com/humancomputerlab/LeLamp/blob/master/docs/5.%20LeLamp%20Control.md).
+
 ### 1. Motor Setup and Calibration
 
-Before using LeLamp, you need to set up and calibrate the servo motors:
-
 1. **Find the servo driver port**:
+
+This command finds the port your motor driver is connected to.
 
 ```bash
 uv run lerobot-find-port
@@ -106,16 +108,18 @@ uv run lerobot-find-port
 
 2. **Setup motors with unique IDs**:
 
+This command set up each motor of LeLamp with an unique ID.
+
 ```bash
 uv run -m lelamp.setup_motors --id your_lamp_name --port the_port_found_in_previous_step
 ```
 
 3. **Calibrate motors**:
 
-After setting up motors, calibrate them for accurate positioning:
+This command calibrate your motors.
 
 ```bash
-uv run -m lelamp.calibrate --id your_lamp_name --port the_port_found_in_previous_step
+sudo uv run -m lelamp.calibrate --id your_lamp_name --port the_port_found_in_previous_step
 ```
 
 The calibration process will:
@@ -141,20 +145,11 @@ sudo uv run -m lelamp.test.test_rgb
 uv run -m lelamp.test.test_audio
 ```
 
-#### Camera
-
-```bash
-# Test camera functionality
-libcamera-hello
-```
-
 #### Motors
 
 ```bash
 uv run -m lelamp.test.test_motors --id your_lamp_name --port the_port_found_in_previous_step
 ```
-
-This can be run on your computer instead of the Raspberry Pi Zero 2W in the lamp head.
 
 ### 3. Record and Replay Episodes
 
@@ -209,7 +204,7 @@ Recorded movements are saved as CSV files with the naming convention:
 
 ## 4. Start upon boot
 
-To start LeLamp's voice app upon booting. Create a systemd service file:
+If you want to start LeLamp's voice app upon booting. Create a systemd service file:
 
 ```bash
 sudo nano /etc/systemd/system/lelamp.service
@@ -255,13 +250,15 @@ sudo systemctl stop lelamp.service
 sudo systemctl status lelamp.service
 ```
 
+Note: Boot time might vary with each run and extended usage (>1 hour) can burn the motors.
+
 ## Sample Apps
 
 Sample apps to test LeLamp's capabilities.
 
 ### LiveKit Voice Agent
 
-To run a conversational agent on LeLamp, create a .env file with the following content in the root of this directory in your raspberry pi:
+To run a conversational agent on LeLamp, create a .env file with the following content in the root of this directory in your Raspberry Pi.
 
 ```bash
 OPENAI_API_KEY=
@@ -270,7 +267,15 @@ LIVEKIT_API_KEY=
 LIVEKIT_API_SECRET=
 ```
 
-On how to gather these information, please refer to [LiveKit's guide](https://docs.livekit.io/agents/start/voice-ai/).
+On how to get LiveKit secrets, please refer to [LiveKit's guide](https://docs.livekit.io/agents/start/voice-ai/). If you have LiveKit CLI, you can run the following command:
+
+```bash
+lk app env -w
+```
+
+This will automatically create an `.env.local` file for you.
+
+On how to get OpenAI secrets, you can follow this [FAQ](https://help.openai.com/en/articles/4936850-where-do-i-find-my-openai-api-key).
 
 Then you can run the agent app by:
 
@@ -281,50 +286,6 @@ sudo uv run main.py download-files
 # For conversational AI
 sudo uv run main.py console
 ```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Servo Connection Issues**:
-
-   - Verify USB connection to servo driver
-   - Check port permissions
-   - Ensure proper power supply
-   - Ensure your servo have the right ID
-
-2. **Audio Problems**:
-
-   - Verify ReSpeaker Hat installation
-   - Check ALSA configuration
-   - Test with `aplay -l` and `arecord -l`
-   - Ensure you have unmuted your speaker by hitting M on the corresponding slider in alsamixer.
-
-3. **Permission Errors**:
-
-   - Run RGB tests with `sudo`
-   - Check user permissions for hardware access
-
-4. **Sudo Sound Error**:
-
-Put the follwing into /etc/asound.conf:
-
-```bash
-# Default capture & playback device = Seeed 2-Mic
-pcm.!default {
-    type plug
-    slave {
-        pcm "hw:3,0"      # input/output device (Seeed 2-Mic)
-    }
-}
-
-ctl.!default {
-    type hw
-    card 3
-}
-```
-
-Note: The number of the sound card should change depending on the output of `aplay -l`.
 
 ## Contributing
 
