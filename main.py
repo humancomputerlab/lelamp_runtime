@@ -230,7 +230,7 @@ Demo rules:
 
 # Entry to the agent
 async def entrypoint(ctx: agents.JobContext):
-    agent = LeLamp()
+    agent = LeLamp(lamp_id="lelamp")
     
     session = AgentSession(
         llm=openai.realtime.RealtimeModel(

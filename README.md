@@ -288,6 +288,13 @@ sudo uv run main.py download-files
 sudo uv run main.py console
 ```
 
+In case your lamp is not `lelamp`, change the id of the lamp inside main.py:
+
+```py
+async def entrypoint(ctx: agents.JobContext):
+    agent = LeLamp(lamp_id="lelamp") # <- Chnage the name here
+```
+
 ## Contributing
 
 This is an open-source project by Human Computer Lab. Contributions are welcome through the GitHub repository.
