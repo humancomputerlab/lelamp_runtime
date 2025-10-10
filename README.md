@@ -267,13 +267,14 @@ LIVEKIT_API_KEY=
 LIVEKIT_API_SECRET=
 ```
 
-On how to get LiveKit secrets, please refer to [LiveKit's guide](https://docs.livekit.io/agents/start/voice-ai/). If you have LiveKit CLI, you can run the following command:
+On how to get LiveKit secrets, please refer to [LiveKit's guide](https://docs.livekit.io/agents/start/voice-ai/). Install LiveKit CLI, then you can run the following command:
 
 ```bash
 lk app env -w
+cat .env.local
 ```
 
-This will automatically create an `.env.local` file for you.
+This will automatically create an `.env.local` file for you, which contains all the secrets on LiveKit side.
 
 On how to get OpenAI secrets, you can follow this [FAQ](https://help.openai.com/en/articles/4936850-where-do-i-find-my-openai-api-key).
 
