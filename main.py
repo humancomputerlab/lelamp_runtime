@@ -48,7 +48,7 @@ Demo rules:
             fps=30
         )
         self.rgb_service = RGBService(
-            led_count=40,
+            led_count=64,
             led_pin=12,
             led_freq_hz=800000,
             led_dma=10,

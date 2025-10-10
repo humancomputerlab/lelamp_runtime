@@ -5,7 +5,7 @@ from ..base import ServiceBase
 
 class RGBService(ServiceBase):
     def __init__(self, 
-                 led_count: int = 40,
+                 led_count: int = 64,
                  led_pin: int = 12,
                  led_freq_hz: int = 800000,
                  led_dma: int = 10,
