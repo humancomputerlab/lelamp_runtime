@@ -29,7 +29,7 @@ def main():
     os.makedirs(recordings_dir, exist_ok=True)
 
     # Set up CSV file for recording
-    csv_filename = os.path.join(recordings_dir, f"{args.name or 'recording'}_{args.id}.csv")
+    csv_filename = os.path.join(recordings_dir, f"{args.name or 'recording'}.csv")
     with open(csv_filename, 'w', newline='') as csvfile:
         csv_writer = None
         

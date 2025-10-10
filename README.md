@@ -200,7 +200,7 @@ This will display:
 #### File Format
 
 Recorded movements are saved as CSV files with the naming convention:
-`{sequence_name}_{lamp_id}.csv`
+`{sequence_name}.csv`
 
 ## 4. Start upon boot
 

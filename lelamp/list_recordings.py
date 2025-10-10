@@ -15,7 +15,7 @@ def list_recordings(lamp_id):
         return
     
     # Pattern to match recordings for the specific lamp ID
-    pattern = os.path.join(recordings_dir, f"*_{lamp_id}.csv")
+    pattern = os.path.join(recordings_dir, f"*.csv")
     recording_files = glob.glob(pattern)
     
     if not recording_files:
@@ -28,7 +28,7 @@ def list_recordings(lamp_id):
     for file_path in sorted(recording_files):
         filename = os.path.basename(file_path)
         # Extract recording name by removing the lamp_id suffix
-        recording_name = filename.replace(f"_{lamp_id}.csv", "")
+        recording_name = filename.replace(f".csv", "")
         
         # Count rows in CSV file
         try:

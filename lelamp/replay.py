@@ -20,7 +20,7 @@ def main():
 
     # Build CSV filename from name and lamp ID
     recordings_dir = os.path.join(os.path.dirname(__file__), "recordings")
-    csv_filename = f"{args.name}_{args.id}.csv"
+    csv_filename = f"{args.name}.csv"
     csv_path = os.path.join(recordings_dir, csv_filename)
 
     # Read CSV file and replay actions

@@ -40,7 +40,7 @@ class MotorsService(ServiceBase):
             self.logger.error("Robot not connected")
             return
         
-        csv_filename = f"{recording_name}_{self.lamp_id}.csv"
+        csv_filename = f"{recording_name}.csv"
         csv_path = os.path.join(self.recordings_dir, csv_filename)
         
         if not os.path.exists(csv_path):
@@ -77,7 +77,7 @@ class MotorsService(ServiceBase):
             return []
         
         recordings = []
-        suffix = f"_{self.lamp_id}.csv"
+        suffix = f".csv"
         
         for filename in os.listdir(self.recordings_dir):
             if filename.endswith(suffix):
