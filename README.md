@@ -284,8 +284,12 @@ Then you can run the agent app by:
 # Only need to run this once
 sudo uv run main.py download-files
 
-# For conversational AI
+# Pick one of the below
+# For Discrete Animation Mode
 sudo uv run main.py console
+
+# For Smooth Animation Mode
+sudo uv run smooth_animation.py console
 ```
 
 In case your lamp is not `lelamp`, change the id of the lamp inside main.py:
@@ -298,6 +302,10 @@ async def entrypoint(ctx: agents.JobContext):
 ## Contributing
 
 This is an open-source project by Human Computer Lab. Contributions are welcome through the GitHub repository.
+
+Contributors:
+
+- @pham-tuan-binh (binhpham@binhph.am): Original developer of the runtime.
 
 ## License
 
