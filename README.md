@@ -303,9 +303,6 @@ async def entrypoint(ctx: agents.JobContext):
 
 This is an open-source project by Human Computer Lab. Contributions are welcome through the GitHub repository.
 
-Contributors:
-
-- @pham-tuan-binh (binhpham@binhph.am): Original developer of the runtime.
 
 ## License
 
