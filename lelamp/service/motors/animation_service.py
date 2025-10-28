@@ -43,7 +43,7 @@ class AnimationService:
         self._event_thread.start()
         
         # Initialize with idle recording via self dispatch
-        self.dispatch("play", self.idle_recording)
+        # self.dispatch("play", self.idle_recording)
 
     def stop(self, timeout: float = 5.0):
         # Stop event processing
