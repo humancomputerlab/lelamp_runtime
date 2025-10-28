@@ -48,11 +48,11 @@ Demo rules:
             fps=30
         )
         self.rgb_service = RGBService(
-            led_count=64,
+            led_count=93,
             led_pin=12,
             led_freq_hz=800000,
             led_dma=10,
-            led_brightness=255,
+            led_brightness=70,
             led_invert=False,
             led_channel=0
         )
@@ -62,7 +62,7 @@ Demo rules:
         self.rgb_service.start()
 
         # Trigger wake up animation via motors service
-        self.motors_service.dispatch("play", "wake_up")
+        # self.motors_service.dispatch("play", "wake_up")
         self.rgb_service.dispatch("solid", (255, 255, 255))
         self._set_system_volume(100)
 
