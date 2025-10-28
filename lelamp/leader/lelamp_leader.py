@@ -85,22 +85,29 @@ class LeLampLeader(Teleoperator):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        if self.calibration:
-            # Calibration file exists, ask user whether to use it or run new calibration
-            user_input = input(
-                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
-            )
-            if user_input.strip().lower() != "c":
-                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
+        # Always prompt user for calibration choice
+        user_input = input(
+            f"Press ENTER for default calibration setup, or type 'c' and press ENTER to choose a calibration file: "
+        )
+        
+        if user_input.strip().lower() == "c":
+            # User wants to choose a calibration file
+            if self.calibration:
+                logger.info(f"Using provided calibration file associated with the id {self.id}")
                 self.bus.write_calibration(self.calibration)
                 return
-
-        logger.info(f"\nRunning calibration of {self}")
+            else:
+                logger.warning(f"No calibration file found for id {self.id}. Running default calibration instead.")
+        
+        # Default calibration setup
+        logger.info(f"\nRunning default calibration of {self}")
         self.bus.disable_torque()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
+        
+        # probably gotta add the rest pose and calulate from in here
         homing_offsets = self.bus.set_half_turn_homings()
 
         print(
@@ -112,6 +119,7 @@ class LeLampLeader(Teleoperator):
         self.calibration = {}
         for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
+                # probably gotta add the rest pose and calulate from in here
                 id=m.id,
                 drive_mode=0,
                 homing_offset=homing_offsets[motor],
@@ -128,6 +136,10 @@ class LeLampLeader(Teleoperator):
         self.bus.configure_motors()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+            # Configure voltage limits for 12V operation (in tenths of volts)
+            # Min 10.0V (100) to Max 14.0V (140) allows 12V operation
+            self.bus.write("Min_Voltage_Limit", motor, 100, normalize=False)
+            self.bus.write("Max_Voltage_Limit", motor, 140, normalize=False)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
