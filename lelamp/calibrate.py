@@ -5,7 +5,6 @@ import logging
 import json
 import os
 from .follower import LeLampFollower, LeLampFollowerConfig
-from .leader import LeLampLeader, LeLampLeaderConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,61 +47,34 @@ def calibrate_all(lamp_id: str, port: str) -> None:
             follower.disconnect()
 
 
-def calibrate_follower(lamp_id: str, port: str) -> None:
-    """Calibrate the follower robot."""
-    logger.info(f"Starting follower calibration for lamp ID: {lamp_id} on port: {port}")
+def calibrate_arm(lamp_id: str, port: str) -> None:
+    """Calibrate the robot arm (applies to both leader and follower)."""
+    logger.info(f"Starting arm calibration for lamp ID: {lamp_id} on port: {port}")
     
-    follower_config = LeLampFollowerConfig(
+    config = LeLampFollowerConfig(
         port=port,
         id=lamp_id,
     )
     
-    follower = LeLampFollower(follower_config)
+    arm = LeLampFollower(config)
     
     try:
         # Connect and calibrate
-        follower.connect(calibrate=False)
-        follower.calibrate()
-        logger.info("Follower calibration completed successfully")
+        arm.connect(calibrate=False)
+        arm.calibrate()
+        logger.info("Arm calibration completed successfully")
     except Exception as e:
-        logger.error(f"Follower calibration failed: {e}")
+        logger.error(f"Arm calibration failed: {e}")
         raise
     finally:
-        if follower.is_connected: 
-            follower.disconnect()
-
-
-def calibrate_leader(lamp_id: str, port: str) -> None:
-    """Calibrate the leader robot."""
-    logger.info(f"Starting leader calibration for lamp ID: {lamp_id} on port: {port}")
-    
-    leader_config = LeLampLeaderConfig(
-        port=port,
-        id=lamp_id,
-    )
-    
-    leader = LeLampLeader(leader_config)
-    
-    try:
-        # Connect and calibrate
-        leader.connect(calibrate=False)
-        leader.calibrate()
-        logger.info("Leader calibration completed successfully")
-    except Exception as e:
-        logger.error(f"Leader calibration failed: {e}")
-        raise
-    finally:
-        if leader.is_connected:
-            leader.disconnect()
+        if arm.is_connected: 
+            arm.disconnect()
 
 
 def main():
     parser = argparse.ArgumentParser(description="Calibrate LeLamp robot follower and leader")
     parser.add_argument('--id', type=str, required=True, help='ID of the lamp')
     parser.add_argument('--port', type=str, required=True, help='Serial port for the lamp')
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument('--follower-only', dest='follower_only', action='store_true', help='Only run follower calibration')
-    group.add_argument('--leader-only', dest='leader_only', action='store_true', help='Only run leader calibration')
     args = parser.parse_args()
     
     try:
