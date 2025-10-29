@@ -78,23 +78,11 @@ def main():
     args = parser.parse_args()
     
     try:
-        # Run according to requested mode
-        if args.follower_only:
-            print("\n" + "="*50)
-            print("FOLLOWER CALIBRATION (only)")
-            print("="*50)
-            calibrate_follower(args.id, args.port)
-        elif args.leader_only:
-            print("\n" + "="*50)
-            print("LEADER CALIBRATION (only)")
-            print("="*50)
-            calibrate_leader(args.id, args.port)
-        else:
-            print("\n" + "="*50)
-            print("DEFAULT CALIBRATION")
-            print("="*50)
-            calibrate_all(args.id, args.port)
-            
+
+        print("\n" + "="*50)
+        print("DEFAULT CALIBRATION")
+        print("="*50)
+        calibrate_all(args.id, args.port)
             
         print("\n" + "="*50)
         print("CALIBRATION COMPLETED SUCCESSFULLY")
