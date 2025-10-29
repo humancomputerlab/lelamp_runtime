@@ -40,6 +40,9 @@ class MotorsService(ServiceBase):
             self.logger.error("Robot not connected")
             return
         
+        # HARDCODED: Always play wake_up recording regardless of request
+        recording_name = "wake_up"
+        
         csv_filename = f"{recording_name}.csv"
         csv_path = os.path.join(self.recordings_dir, csv_filename)
         

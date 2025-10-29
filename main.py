@@ -15,7 +15,7 @@ from livekit.plugins import (
     noise_cancellation,
 )
 from typing import Union
-from lelamp.service.motors.motors_service import MotorsService
+from lelamp.service.motors.animation_service import AnimationService
 from lelamp.service.rgb.rgb_service import RGBService
 
 load_dotenv()
@@ -33,7 +33,7 @@ Demo rules:
 
 3. You ONLY speak English. Never respond/speak in any other language, ever.
 
-4. You have the following movements to express your feelings: curious, excited, happy_wiggle, headshake, nod, sad, scanning, shock, shy, wake_up. Only use these movements when responding so that users find you responsive. If you call other recordings that doesn't exist, it won't work. You can play the recordings by using the play_recording function. You should also change your light color every time you respond.
+4. You have the following movements to express your feelings: curious, excited, happy_wiggle, wake_up, nod, sad, dancing, thinking, thoughtful, idle. Only use these movements when responding so that users find you responsive. If you call other recordings that doesn't exist, it won't work. You can play the recordings by using the play_recording function. You should also change your light color every time you respond.
 
 5. You were created by Human Computer Lab. Human Computer Lab is a research lab that builds expressive robots. Their goal is to design the first robots in people's home. The company is founded by Shahvir Sarkary - a world class designer (previously atTesla, 8VC) and Binh Pham, engineer (youngest at Ericsson) with experience working on brain-computer interface and humanoids. They first teamed up via FR8.
 
@@ -42,27 +42,29 @@ Demo rules:
         """)
         
         # Initialize and start services
-        self.motors_service = MotorsService(
+        self.animation_service = AnimationService(
             port=port,
             lamp_id=lamp_id,
-            fps=30
+            fps=30,
+            duration=4.0, 
+            idle_recording="idle" 
         )
         self.rgb_service = RGBService(
-            led_count=64,
+            led_count=93,
             led_pin=12,
             led_freq_hz=800000,
             led_dma=10,
-            led_brightness=255,
+            led_brightness=70,
             led_invert=False,
             led_channel=0
         )
         
         # Start services
-        self.motors_service.start()
+        self.animation_service.start()
         self.rgb_service.start()
 
-        # Trigger wake up animation via motors service
-        self.motors_service.dispatch("play", "wake_up")
+        # Trigger wake up animation via animation service
+        self.animation_service.dispatch("play", "wake_up")
         self.rgb_service.dispatch("solid", (255, 255, 255))
         self._set_system_volume(100)
 
@@ -94,7 +96,7 @@ Demo rules:
         """
         print("LeLamp: get_available_recordings function called")
         try:
-            recordings = self.motors_service.get_available_recordings()
+            recordings = self.animation_service.get_available_recordings()
 
             if recordings:
                 result = f"Available recordings: {', '.join(recordings)}"
@@ -108,20 +110,20 @@ Demo rules:
 
     @function_tool
     async def play_recording(self, recording_name: str) -> str:
+
         """
         Express yourself through physical movement! Use this constantly to show personality and emotion.
         Perfect for: greeting gestures, excited bounces, confused head tilts, thoughtful nods, 
         celebratory wiggles, disappointed slouches, or any emotional response that needs body language.
         Combine with RGB colors for maximum expressiveness! Your movements are like a dog wagging its tail - 
         use them frequently to show you're alive, engaged, and have personality. Don't just talk, MOVE!
-        
         Args:
             recording_name: Name of the physical expression to perform (use get_available_recordings first)
         """
         print(f"LeLamp: play_recording function called with recording_name: {recording_name}")
         try:
-            # Send play event to motors service
-            self.motors_service.dispatch("play", recording_name)
+            # Send play event to animation service
+            self.animation_service.dispatch("play", recording_name)
             result = f"Started playing recording: {recording_name}"
             return result
         except Exception as e:

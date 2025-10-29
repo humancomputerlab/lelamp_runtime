@@ -111,18 +111,23 @@ class LeLampFollower(Robot):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        if self.calibration:
-            # self.calibration is not empty here
-            user_input = input(
-                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
-            )
-            if user_input.strip().lower() != "c":
-                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
+         
+        self.bus.disable_torque()
+        # Always prompt user for calibration choice
+        user_input = input(
+            f"Press ENTER for default calibration setup, or type 'c' and press ENTER to modify config: "
+        )
+        if user_input.strip().lower() == "c":
+            # User wants to choose a calibration file
+            if self.calibration:
+                logger.info(f"Using provided calibration file associated with the id {self.id}")
                 self.bus.write_calibration(self.calibration)
                 return
-
-        logger.info(f"\nRunning calibration of {self}")
-        self.bus.disable_torque()
+            else:
+                logger.warning(f"No calibration file found for id {self.id}. Running default calibration instead.")
+        
+        # Default calibration setup
+        logger.info(f"\nRunning default calibration of {self}")
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
@@ -164,6 +169,8 @@ class LeLampFollower(Robot):
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
+            self.bus.write("Min_Voltage_Limit", motor, 100, normalize=False)
+            self.bus.write("Max_Voltage_Limit", motor, 140, normalize=False)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
     def get_observation(self) -> dict[str, Any]:

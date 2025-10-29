@@ -5,11 +5,11 @@ from ..base import ServiceBase
 
 class RGBService(ServiceBase):
     def __init__(self, 
-                 led_count: int = 64,
+                 led_count: int = 93,
                  led_pin: int = 12,
                  led_freq_hz: int = 800000,
                  led_dma: int = 10,
-                 led_brightness: int = 255,
+                 led_brightness: int = 70,
                  led_invert: bool = False,
                  led_channel: int = 0):
         super().__init__("rgb")
