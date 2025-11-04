@@ -5,6 +5,7 @@ import logging
 import json
 import os
 from .follower import LeLampFollower, LeLampFollowerConfig
+from .leader import LeLampLeader, LeLampLeaderConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
