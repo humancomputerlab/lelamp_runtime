@@ -4,6 +4,7 @@ import glob
 import csv
 from datetime import datetime
 
+from service.config_utils import load_config
 
 def list_recordings(lamp_id):
     """List all recordings for a given lamp ID."""
@@ -49,9 +50,15 @@ def list_recordings(lamp_id):
 
 
 def main():
+    # Load saved config
+    saved_id, _ = load_config()  # Only need the ID, not the port
+    
     parser = argparse.ArgumentParser(description="List recordings for a specific lamp ID")
-    parser.add_argument('--id', type=str, required=True, help='ID of the lamp to list recordings for')
+    parser.add_argument('--id', type=str, default=saved_id, help='ID of the lamp to list recordings for')
     args = parser.parse_args()
+
+    if not args.id:
+        parser.error("Please provide --id explicitly or run calibration first.")
     
     list_recordings(args.id)
 

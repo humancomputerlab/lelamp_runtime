@@ -4,15 +4,23 @@ import time
 import os
 
 from .follower import LeLampFollowerConfig, LeLampFollower
+from .service.config_utils import load_config
 from lerobot.utils.robot_utils import busy_wait
 
 def main():
+
+    # Load saved config
+    saved_id, saved_port = load_config()
+
     parser = argparse.ArgumentParser(description="Replay recorded actions from CSV file")
     parser.add_argument('--name', type=str, required=True, help='Name of the recording to replay')
-    parser.add_argument('--port', type=str, required=True, help='Serial port for the robot')
-    parser.add_argument('--id', type=str, required=True, help='ID of the robot')
+    parser.add_argument('--port', type=str, default=saved_port, help='Serial port for the robot')
+    parser.add_argument('--id', type=str, default=saved_id, help='ID of the robot')
     parser.add_argument('--fps', type=int, default=30, help='Frames per second for replay (default: 30)')
     args = parser.parse_args()
+
+    if not args.id or not args.port:
+        parser.error("Please provide --id and --port explicitly or run calibration first.")
 
     robot_config = LeLampFollowerConfig(port=args.port, id=args.id)
     robot = LeLampFollower(robot_config)

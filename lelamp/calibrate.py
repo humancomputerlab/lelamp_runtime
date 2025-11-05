@@ -6,6 +6,8 @@ import json
 import os
 from .follower import LeLampFollower, LeLampFollowerConfig
 from .leader import LeLampLeader, LeLampLeaderConfig
+from .service.config_utils import save_config
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -76,21 +78,33 @@ def main():
     parser = argparse.ArgumentParser(description="Calibrate LeLamp robot follower and leader")
     parser.add_argument('--id', type=str, required=True, help='ID of the lamp')
     parser.add_argument('--port', type=str, required=True, help='Serial port for the lamp')
+    parser.add_argument('--config-only', action='store_true', help='Only update config file with ID and port, skip calibration')
     args = parser.parse_args()
     
     try:
-
-        print("\n" + "="*50)
-        print("DEFAULT CALIBRATION")
-        print("="*50)
-        calibrate_all(args.id, args.port)
+        if args.config_only:
+            # Just save the config without running calibration
+            print("\n" + "="*50)
+            print("UPDATING CONFIG")
+            print("="*50)
+            save_config(args.id, args.port)
+            print("\n" + "="*50)
+            print("CONFIG UPDATED SUCCESSFULLY")
+            print("="*50)
+        else:
+            # Run full calibration
+            print("\n" + "="*50)
+            print("DEFAULT CALIBRATION")
+            print("="*50)
+            calibrate_all(args.id, args.port)
+            save_config(args.id, args.port)
             
-        print("\n" + "="*50)
-        print("CALIBRATION COMPLETED SUCCESSFULLY")
-        print("="*50)
+            print("\n" + "="*50)
+            print("CALIBRATION COMPLETED SUCCESSFULLY")
+            print("="*50)
         
     except Exception as e:
-        logger.error(f"Calibration process failed: {e}")
+        logger.error(f"Process failed: {e}")
         return 1
     
     return 0

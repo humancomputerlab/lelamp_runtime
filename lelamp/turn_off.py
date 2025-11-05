@@ -6,6 +6,7 @@ sys.path.append(os.path.dirname(__file__))
 
 from service.rgb import RGBService
 from follower import LeLampFollower, LeLampFollowerConfig
+from service.config_utils import load_config
 
 def turn_off(port: str, lamp_id: str):
     # Initialize robot connection
@@ -42,10 +43,16 @@ def turn_off(port: str, lamp_id: str):
         rgb_service.stop()
 
 def main():
+    # Load saved config
+    saved_id, saved_port = load_config()
+    
     parser = argparse.ArgumentParser(description="Turn off LeLamp LED and disconnect robot")
-    parser.add_argument('--id', type=str, required=True, help='ID of the lamp')
-    parser.add_argument('--port', type=str, required=True, help='Serial port for the lamp')
+    parser.add_argument('--id', type=str, default=saved_id, help='ID of the lamp')
+    parser.add_argument('--port', type=str, default=saved_port, help='Serial port for the lamp')
     args = parser.parse_args()
+
+    if not args.id or not args.port:
+        parser.error("Please provide --id and --port explicitly or run calibration first.")
 
     turn_off(args.port, args.id)
 

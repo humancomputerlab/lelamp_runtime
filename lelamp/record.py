@@ -4,14 +4,23 @@ import csv
 import os
 from .leader import LeLampLeader, LeLampLeaderConfig
 from lerobot.utils.robot_utils import busy_wait
-  
+from .service.config_utils import load_config
+
 def main():
-    parser = argparse.ArgumentParser(description="Check motors status and position")
-    parser.add_argument('--id', type=str, required=True, help='ID of the lamp')
-    parser.add_argument('--port', type=str, required=True, help='Serial port for the lamp')
+    # Load saved config
+    saved_id, saved_port = load_config()
+    
+    parser = argparse.ArgumentParser(description="Record actions from LeLamp leader")
+    parser.add_argument('--id', type=str, default=saved_id, help='ID of the lamp')
+    parser.add_argument('--port', type=str, default=saved_port, help='Serial port for the lamp')
     parser.add_argument('--name', type=str, help='Name of recording')
     parser.add_argument('--fps', type=int, default=30, help='Frames per second for recording (default: 30)')
     args = parser.parse_args()
+    
+    # Validate that we have required arguments
+    if not args.id or not args.port:
+        parser.error("--id and --port are required. Run calibration first or provide them explicitly.")
+
 
     leader_config = LeLampLeaderConfig(
         port=args.port,
