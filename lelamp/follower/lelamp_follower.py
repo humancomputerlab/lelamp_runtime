@@ -160,10 +160,22 @@ class LeLampFollower(Robot):
             for motor in self.bus.motors:
                 self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
                 # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-                self.bus.write("P_Coefficient", motor, 16)
+                self.bus.write("P_Coefficient", motor, 8)
                 # Set I_Coefficient and D_Coefficient to default value 0 and 32
                 self.bus.write("I_Coefficient", motor, 0)
-                self.bus.write("D_Coefficient", motor, 32)
+                self.bus.write("D_Coefficient", motor, 10)
+                self.bus.write("Torque_Limit", motor, 1000)
+                self.bus.write("Velocity_closed_loop_P_proportional_coefficient", motor, 50)
+                self.bus.write("Velocity_closed_loop_I_integral_coefficient", motor, 200)
+
+                motor_id = self.bus.motors[motor].id
+                if motor_id == 1:
+                    deadzone_value = 3
+                else:
+                    deadzone_value = 1
+                self.bus.write("CW_Dead_Zone", motor, deadzone_value)
+                self.bus.write("CCW_Dead_Zone", motor, deadzone_value)
+
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
