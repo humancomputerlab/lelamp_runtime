@@ -2,8 +2,6 @@
 
 ![](./assets/images/Banner.png)
 
-**NOTE: IF YOU'RE HERE FOR THE BOXBOTS HACKATHON, THIS IS THE OLD REPO. Go back to https://github.com/humancomputerlab/boxbots_lelampruntime **
-
 This repository holds the code for controlling LeLamp. The runtime provides a comprehensive control system for the robotic lamp, including motor control, recording/replay functionality, voice interaction, and testing capabilities.
 
 [LeLamp](https://github.com/humancomputerlab/LeLamp) is an open source robot lamp based on [Apple's Elegnt](https://machinelearning.apple.com/research/elegnt-expressive-functional-movement), made by [[Human Computer Lab]](https://www.humancomputerlab.com/)
