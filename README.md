@@ -117,6 +117,33 @@ MODEL_NAME=your-local-model
 - 所以本地模型必须暴露一个 OpenAI 兼容的 realtime 接口
 - 如果你的本地模型只有普通 `/v1/chat/completions`，那不能直接替换进来，得另做一套 STT + LLM + TTS 管线
 
+## Manager + Item Layer v1
+
+runtime 现在多了一条独立于 realtime speaker 的慢速 sidecar 路径：
+
+- `speaker` 继续负责低延迟语音回复
+- `item layer` 把用户发言、回复、tool invoke/result 镜像成 `lelamp.item.v1` JSONL
+- `manager` 读取当前 session items，生成派生 snapshot
+- `action DSL` 先约束 scene primitive，再 lower 到现有 recording 和 RGB `solid` / `paint`
+
+这层默认不会替代原始 memory ledger。`events.jsonl` 仍然是 source of truth，manager snapshot 只是可重建的 derived sidecar。
+
+关键变量：
+
+```bash
+LELAMP_MANAGER_PROVIDER=glm
+LELAMP_MANAGER_MODEL=glm-4.5-air
+LELAMP_MANAGER_API_KEY=
+LELAMP_MANAGER_BASE_URL=
+LELAMP_ITEM_STORE_PATH=/tmp/lelamp-items.jsonl
+```
+
+运行时行为：
+
+- manager snapshot 默认写到用户 memory 根目录下的 `derived/manager_snapshot.v1.json`
+- speaker prompt 启动时会优先尝试加载这个 snapshot，再拼接 memory header
+- scene plan 当前只会编译到现有安全能力，不会直接下发原始舵机轨迹
+
 ## Pi 5 LED 路径
 
 Pi 5 上默认走官方 `ws2812-pio` 驱动，不走 `rpi_ws281x` DMA 路径。
