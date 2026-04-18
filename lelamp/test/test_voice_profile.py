@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -114,6 +115,50 @@ class VoiceProfileTests(unittest.TestCase):
             instructions.startswith('<memory user_id="default">remember this</memory>\n\n')
         )
         self.assertIn("刚搬来的室友", instructions)
+
+    def test_manager_snapshot_is_prepended_before_memory_header_and_voice_profile(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = load_runtime_settings()
+
+        with patch(
+            "lelamp.voice_profile.load_manager_snapshot_hint",
+            return_value="<manager>prefer warm greeting scenes</manager>",
+        ), patch(
+            "lelamp.voice_profile.build_memory_header",
+            return_value='<memory user_id="default">remember this</memory>',
+        ):
+            instructions = build_agent_instructions(settings)
+
+        self.assertTrue(
+            instructions.startswith(
+                "<manager>prefer warm greeting scenes</manager>\n\n"
+                '<memory user_id="default">remember this</memory>\n\n'
+            )
+        )
+
+    def test_load_manager_snapshot_hint_reads_summary_and_hints(self) -> None:
+        from lelamp.voice_profile import load_manager_snapshot_hint
+
+        with patch.dict(os.environ, {}, clear=True):
+            root = Path(self.id().replace(".", "_"))
+
+        with patch("lelamp.voice_profile.os.getenv", return_value="/tmp/test-manager-snapshot.json"), patch(
+            "lelamp.voice_profile.Path.read_text",
+            return_value=(
+                '{"profile_summary":"prefer warm greeting scenes",'
+                '"preference_hints":["keep replies short","avoid repeated white light"]}'
+            ),
+        ), patch("lelamp.voice_profile.Path.exists", return_value=True):
+            hint = load_manager_snapshot_hint()
+
+        self.assertEqual(
+            hint,
+            "<manager>\n"
+            "prefer warm greeting scenes\n"
+            "- keep replies short\n"
+            "- avoid repeated white light\n"
+            "</manager>",
+        )
 
 
 if __name__ == "__main__":

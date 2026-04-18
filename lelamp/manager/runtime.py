@@ -26,3 +26,10 @@ class ManagerRuntime:
 
     def load_snapshot(self) -> dict[str, Any] | None:
         return self._derived.read_snapshot(self.SNAPSHOT_FILE)
+
+    @property
+    def snapshot_path(self) -> Path:
+        return self._derived.root / self.SNAPSHOT_FILE
+
+    def flush(self) -> dict[str, Any] | None:
+        return self.load_snapshot()

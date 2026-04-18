@@ -188,6 +188,155 @@ def test_agent_memory_runtime_installs_session_listeners_and_records_events():
     )
 
 
+def test_agent_memory_runtime_mirrors_conversation_items_and_runs_manager():
+    from lelamp.memory.runtime import AgentMemoryRuntime
+
+    recorded_calls = []
+
+    class FakeWriter:
+        def write_conversation(self, **kwargs):
+            recorded_calls.append(("conversation", kwargs))
+
+    class FakeItemStore:
+        def __init__(self):
+            self.items = []
+
+        def append(self, item):
+            self.items.append(item)
+
+        def iter_session_items(self, session_id):
+            return [item for item in self.items if item["session_id"] == session_id]
+
+    class FakeManagerRuntime:
+        def __init__(self):
+            self.calls = []
+
+        def process_once(self, *, session_id, items):
+            self.calls.append((session_id, items))
+            return {"profile_summary": "updated", "preference_hints": [], "scene_priors": {}, "banned_patterns": [], "updated_at_ms": 1}
+
+    class FakeSession:
+        def __init__(self):
+            self.callbacks = {}
+
+        def on(self, event, callback=None):
+            self.callbacks[event] = callback
+            return callback
+
+    item_store = FakeItemStore()
+    manager_runtime = FakeManagerRuntime()
+    runtime = AgentMemoryRuntime(
+        enabled=True,
+        writer=FakeWriter(),
+        session_handle=SimpleNamespace(session_id="sess_2026-04-18_12-00-00"),
+        item_store=item_store,
+        manager_runtime=manager_runtime,
+    )
+    session = FakeSession()
+
+    runtime.install_session_listeners(
+        session,
+        model_provider="qwen",
+        model_name="qwen3.5-omni-plus-realtime",
+    )
+
+    session.callbacks["user_input_transcribed"](
+        SimpleNamespace(
+            transcript="你好呀",
+            is_final=True,
+            created_at=1713412800.1,
+        )
+    )
+    session.callbacks["conversation_item_added"](
+        SimpleNamespace(
+            item=SimpleNamespace(role="assistant", text_content="我在呢。"),
+            created_at=1713412800.4,
+        )
+    )
+
+    assert [item["kind"] for item in item_store.items] == [
+        "conversation.user_turn",
+        "conversation.reply",
+    ]
+    assert item_store.items[0]["payload"]["text"] == "你好呀"
+    assert item_store.items[1]["payload"]["text"] == "我在呢。"
+    assert manager_runtime.calls == [
+        (
+            "sess_2026-04-18_12-00-00",
+            item_store.items,
+        )
+    ]
+
+
+def test_agent_memory_runtime_mirrors_tool_events_into_item_store():
+    from lelamp.memory.runtime import AgentMemoryRuntime
+
+    recorded_calls = []
+
+    class FakeWriter:
+        def write_function_tool(self, **kwargs):
+            recorded_calls.append(("function_tool", kwargs))
+
+    class FakeItemStore:
+        def __init__(self):
+            self.items = []
+
+        def append(self, item):
+            self.items.append(item)
+
+        def iter_session_items(self, session_id):
+            return [item for item in self.items if item["session_id"] == session_id]
+
+    class FakeSession:
+        def __init__(self):
+            self.callbacks = {}
+
+        def on(self, event, callback=None):
+            self.callbacks[event] = callback
+            return callback
+
+    item_store = FakeItemStore()
+    runtime = AgentMemoryRuntime(
+        enabled=True,
+        writer=FakeWriter(),
+        session_handle=SimpleNamespace(session_id="sess_2026-04-18_12-00-00"),
+        item_store=item_store,
+    )
+    session = FakeSession()
+
+    runtime.install_session_listeners(
+        session,
+        model_provider="qwen",
+        model_name="qwen3.5-omni-plus-realtime",
+    )
+
+    session.callbacks["function_tools_executed"](
+        SimpleNamespace(
+            zipped=lambda: [
+                (
+                    SimpleNamespace(
+                        name="express",
+                        arguments='{"style":"greeting"}',
+                        created_at=1713412800.5,
+                    ),
+                    SimpleNamespace(
+                        output="expression_ok",
+                        is_error=False,
+                        created_at=1713412800.7,
+                    ),
+                )
+            ]
+        )
+    )
+
+    assert [item["kind"] for item in item_store.items] == [
+        "conversation.tool_invoke",
+        "conversation.tool_result",
+    ]
+    assert item_store.items[0]["payload"]["tool_name"] == "express"
+    assert item_store.items[1]["payload"]["ok"] is True
+
+
 def test_agent_memory_runtime_extracts_assistant_text_from_content_objects():
     from lelamp.memory.runtime import AgentMemoryRuntime
 

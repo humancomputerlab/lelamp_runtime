@@ -12,9 +12,21 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
+from lelamp.items.projections import (
+    project_conversation_reply,
+    project_conversation_user_turn,
+    project_tool_invoke,
+    project_tool_result,
+)
+from lelamp.items.store import ItemStore
+from lelamp.manager.glm_manager import GLMManager
+from lelamp.manager.runtime import ManagerRuntime
+
 from . import ids as _ids
+from .root import ensure_user_memory_root
 from .selfcheck import run_selfcheck
 from .session import SessionHandle, attach_or_create_session, start_agent_session
 from .writer import MemoryWriter
@@ -22,6 +34,7 @@ from .writer import MemoryWriter
 _logger = logging.getLogger(__name__)
 
 _DISABLE_ENV = "LELAMP_MEMORY_DISABLE"
+_MANAGER_SNAPSHOT_ENV = "LELAMP_MANAGER_SNAPSHOT_PATH"
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
@@ -35,6 +48,8 @@ class AgentMemoryRuntime:
     enabled: bool = False
     writer: Optional[MemoryWriter] = None
     session_handle: Optional[SessionHandle] = None
+    item_store: Optional[ItemStore] = None
+    manager_runtime: Optional[ManagerRuntime] = None
     _closed: bool = field(default=False, init=False, repr=False)
     _pending_user_text: Optional[str] = field(default=None, init=False, repr=False)
     _pending_user_ts_ms: Optional[int] = field(default=None, init=False, repr=False)
@@ -62,6 +77,11 @@ class AgentMemoryRuntime:
             self.session_handle.close()
         except Exception:
             _logger.exception("memory runtime: failed to close session")
+        if self.manager_runtime is not None:
+            try:
+                self.manager_runtime.flush()
+            except Exception:
+                _logger.exception("memory runtime: failed to flush manager snapshot")
 
     def install_session_listeners(
         self,
@@ -86,8 +106,16 @@ class AgentMemoryRuntime:
             transcript = str(getattr(ev, "transcript", "") or "").strip()
             if not transcript:
                 return
+            ts_ms = _event_ts_ms(ev) or _ids.current_timestamp_ms()
             self._pending_user_text = transcript
-            self._pending_user_ts_ms = _event_ts_ms(ev)
+            self._pending_user_ts_ms = ts_ms
+            self._append_item(
+                project_conversation_user_turn(
+                    session_id=self.session_handle.session_id,
+                    text=transcript,
+                    ts_ms=ts_ms,
+                )
+            )
 
         def _on_conversation_item_added(ev: Any) -> None:
             item = getattr(ev, "item", None)
@@ -101,6 +129,7 @@ class AgentMemoryRuntime:
                 return
 
             assistant_ts_ms = _event_ts_ms(ev)
+            assistant_item_ts_ms = assistant_ts_ms or _ids.current_timestamp_ms()
             user_ts_ms = self._pending_user_ts_ms
             duration_ms = None
             if assistant_ts_ms is not None and user_ts_ms is not None:
@@ -118,19 +147,30 @@ class AgentMemoryRuntime:
                 model_name=model_name,
                 ts_ms=assistant_ts_ms,
             )
+            self._append_item(
+                project_conversation_reply(
+                    session_id=self.session_handle.session_id,
+                    text=assistant_text,
+                    ts_ms=assistant_item_ts_ms,
+                )
+            )
             if isinstance(record, dict):
                 event_id = record.get("event_id")
                 if isinstance(event_id, str) and event_id:
                     self._last_conversation_event_id = event_id
+            self._run_manager()
             self._pending_user_text = None
             self._pending_user_ts_ms = None
 
         def _on_function_tools_executed(ev: Any) -> None:
+            processed_any = False
             for call, output in getattr(ev, "zipped", lambda: [])():
                 invoke_id = _ids.generate_invoke_id()
                 args = _parse_tool_args(getattr(call, "arguments", ""))
                 invoke_ts_ms = _object_ts_ms(call)
+                invoke_item_ts_ms = invoke_ts_ms or _ids.current_timestamp_ms()
                 result_ts_ms = _object_ts_ms(output)
+                result_item_ts_ms = result_ts_ms or _ids.current_timestamp_ms()
                 duration_ms = None
                 if invoke_ts_ms is not None and result_ts_ms is not None:
                     duration_ms = max(0, result_ts_ms - invoke_ts_ms)
@@ -147,6 +187,16 @@ class AgentMemoryRuntime:
                     caller="llm",
                     ts_ms=invoke_ts_ms,
                 )
+                self._append_item(
+                    project_tool_invoke(
+                        session_id=self.session_handle.session_id,
+                        tool_name=str(getattr(call, "name", "") or ""),
+                        args=args,
+                        caller="llm",
+                        invoke_id=invoke_id,
+                        ts_ms=invoke_item_ts_ms,
+                    )
+                )
                 self.writer.write_function_tool(
                     session_id=self.session_handle.session_id,
                     source="voice_agent",
@@ -160,6 +210,22 @@ class AgentMemoryRuntime:
                     error=error,
                     ts_ms=result_ts_ms,
                 )
+                self._append_item(
+                    project_tool_result(
+                        session_id=self.session_handle.session_id,
+                        tool_name=str(getattr(call, "name", "") or ""),
+                        args=args,
+                        caller="llm",
+                        invoke_id=invoke_id,
+                        duration_ms=duration_ms,
+                        ok=ok,
+                        error=error,
+                        ts_ms=result_item_ts_ms,
+                    )
+                )
+                processed_any = True
+            if processed_any:
+                self._run_manager()
 
         session.on("user_input_transcribed", _guarded(_on_user_input_transcribed))
         session.on("conversation_item_added", _guarded(_on_conversation_item_added))
@@ -218,6 +284,26 @@ class AgentMemoryRuntime:
             _logger.exception(
                 "memory runtime: failed to record auto-expression fallback",
             )
+
+    def _append_item(self, item: dict[str, Any]) -> None:
+        if self.item_store is None or self.session_handle is None:
+            return
+        try:
+            self.item_store.append(item)
+        except Exception:
+            _logger.exception("memory runtime: failed to append item")
+
+    def _run_manager(self) -> None:
+        if self.manager_runtime is None or self.item_store is None or self.session_handle is None:
+            return
+        try:
+            items = list(self.item_store.iter_session_items(self.session_handle.session_id))
+            self.manager_runtime.process_once(
+                session_id=self.session_handle.session_id,
+                items=items,
+            )
+        except Exception:
+            _logger.exception("memory runtime: manager sidecar processing failed")
 
 
 def _guarded(callback):
@@ -304,11 +390,43 @@ def bootstrap_agent_runtime(settings, *, user_id: Optional[str] = None) -> Agent
         _logger.exception("memory runtime: bootstrap failed, degrading to no-op")
         return AgentMemoryRuntime(enabled=False)
 
+    item_store = _build_item_store(settings)
+    manager_runtime = _build_manager_runtime(settings, user_id=user_id, item_store=item_store)
+
     return AgentMemoryRuntime(
         enabled=True,
         writer=writer,
         session_handle=session_handle,
+        item_store=item_store,
+        manager_runtime=manager_runtime,
     )
+
+
+def _build_item_store(settings) -> ItemStore | None:
+    path_value = getattr(settings, "item_store_path", "/tmp/lelamp-items.jsonl")
+    try:
+        return ItemStore(Path(path_value))
+    except Exception:
+        _logger.exception("memory runtime: item store bootstrap failed")
+        return None
+
+
+def _build_manager_runtime(settings, *, user_id: Optional[str], item_store: ItemStore | None) -> ManagerRuntime | None:
+    if item_store is None:
+        return None
+    try:
+        derived_root = ensure_user_memory_root(user_id) / "derived"
+        runtime = ManagerRuntime(
+            manager=GLMManager(settings=settings),
+            item_store_path=item_store.path,
+            derived_root=derived_root,
+        )
+    except Exception:
+        _logger.exception("memory runtime: manager sidecar bootstrap failed")
+        return None
+
+    os.environ[_MANAGER_SNAPSHOT_ENV] = str(runtime.snapshot_path)
+    return runtime
 
 
 def record_standalone_playback(

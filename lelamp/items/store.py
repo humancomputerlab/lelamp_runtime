@@ -38,3 +38,8 @@ class ItemStore:
                 item = json.loads(line)
                 validate_item(item)
                 yield item
+
+    def iter_session_items(self, session_id: str) -> Iterator[dict[str, Any]]:
+        for item in self.iter_items():
+            if item.get("session_id") == session_id:
+                yield item

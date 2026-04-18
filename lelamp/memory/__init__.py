@@ -15,6 +15,8 @@ ships as a pure library so it can be exercised in isolation before we
 wire it into the runtime hot path.
 """
 
+from typing import TYPE_CHECKING
+
 from .ids import (
     AGENT_SESSION_PREFIX,
     MANUAL_SESSION_PREFIX,
@@ -25,7 +27,6 @@ from .ids import (
     is_manual_session,
 )
 from .reader import build_memory_header
-from .runtime import AgentMemoryRuntime, bootstrap_agent_runtime
 from .root import (
     DEFAULT_USER_ID,
     ensure_user_memory_root,
@@ -33,6 +34,9 @@ from .root import (
     resolve_user_id,
     user_memory_root,
 )
+
+if TYPE_CHECKING:
+    from .runtime import AgentMemoryRuntime
 
 __all__ = [
     "AGENT_SESSION_PREFIX",
@@ -51,3 +55,15 @@ __all__ = [
     "resolve_user_id",
     "user_memory_root",
 ]
+
+
+def __getattr__(name: str):
+    if name == "AgentMemoryRuntime":
+        from .runtime import AgentMemoryRuntime
+
+        return AgentMemoryRuntime
+    if name == "bootstrap_agent_runtime":
+        from .runtime import bootstrap_agent_runtime
+
+        return bootstrap_agent_runtime
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

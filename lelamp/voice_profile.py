@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 from lelamp.memory import build_memory_header
 from lelamp.runtime_config import RuntimeSettings
 
@@ -203,7 +207,7 @@ def build_agent_instructions(settings: RuntimeSettings) -> str:
                 _zh_rules_block(),
             )
         )
-        return _prepend_memory_header(prompt)
+        return _prepend_runtime_context(prompt)
 
     prompt = "\n\n".join(
         (
@@ -215,7 +219,7 @@ def build_agent_instructions(settings: RuntimeSettings) -> str:
             _en_rules_block(),
         )
     )
-    return _prepend_memory_header(prompt)
+    return _prepend_runtime_context(prompt)
 
 
 def build_startup_reply_instructions(settings: RuntimeSettings) -> str:
@@ -234,8 +238,47 @@ def build_startup_reply_instructions(settings: RuntimeSettings) -> str:
     )
 
 
-def _prepend_memory_header(prompt: str) -> str:
-    header = build_memory_header()
-    if not header:
-        return prompt
-    return f"{header}\n\n{prompt}"
+def load_manager_snapshot_hint() -> str:
+    path = os.getenv("LELAMP_MANAGER_SNAPSHOT_PATH")
+    if not path:
+        return ""
+
+    snapshot_path = Path(path)
+    if not snapshot_path.exists():
+        return ""
+
+    try:
+        data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+
+    summary = str(data.get("profile_summary") or "").strip()
+    raw_hints = data.get("preference_hints") or []
+    hints = [
+        str(hint).strip()
+        for hint in raw_hints
+        if isinstance(hint, str) and hint.strip()
+    ]
+
+    if not summary and not hints:
+        return ""
+
+    lines = ["<manager>"]
+    if summary:
+        lines.append(summary)
+    for hint in hints[:6]:
+        lines.append(f"- {hint}")
+    lines.append("</manager>")
+    return "\n".join(lines)
+
+
+def _prepend_runtime_context(prompt: str) -> str:
+    blocks = []
+    manager_hint = load_manager_snapshot_hint()
+    if manager_hint:
+        blocks.append(manager_hint)
+    memory_header = build_memory_header()
+    if memory_header:
+        blocks.append(memory_header)
+    blocks.append(prompt)
+    return "\n\n".join(blocks)
