@@ -161,6 +161,11 @@ class RuntimeSettings:
     model_base_url: str | None
     model_name: str | None
     model_voice: str
+    manager_provider: str
+    manager_api_key: str | None
+    manager_model: str | None
+    manager_base_url: str | None
+    item_store_path: str
     qwen_use_server_vad: bool
     glm_use_server_vad: bool
     agent_language: str
@@ -196,6 +201,9 @@ class RuntimeSettings:
 
 def load_runtime_settings() -> RuntimeSettings:
     model_provider = _get_model_provider()
+    manager_provider = _normalize_model_provider(
+        _get_optional_str("LELAMP_MANAGER_PROVIDER") or "glm"
+    )
 
     idle_recording = _get_str("LELAMP_IDLE_RECORDING", "home_safe")
 
@@ -211,6 +219,12 @@ def load_runtime_settings() -> RuntimeSettings:
         model_base_url=_get_optional_str("MODEL_BASE_URL") or _default_model_base_url(model_provider),
         model_name=_get_optional_str("MODEL_NAME") or _default_model_name(model_provider),
         model_voice=_get_str("MODEL_VOICE", _default_model_voice(model_provider)),
+        manager_provider=manager_provider,
+        manager_api_key=_get_optional_str("LELAMP_MANAGER_API_KEY")
+        or _get_model_api_key(manager_provider),
+        manager_model=_get_optional_str("LELAMP_MANAGER_MODEL") or "glm-4.5-air",
+        manager_base_url=_get_optional_str("LELAMP_MANAGER_BASE_URL"),
+        item_store_path=_get_str("LELAMP_ITEM_STORE_PATH", "/tmp/lelamp-items.jsonl"),
         qwen_use_server_vad=_get_bool("LELAMP_QWEN_USE_SERVER_VAD", False),
         glm_use_server_vad=_get_bool("LELAMP_GLM_USE_SERVER_VAD", False),
         agent_language=_get_str("LELAMP_AGENT_LANGUAGE", "zh-CN"),

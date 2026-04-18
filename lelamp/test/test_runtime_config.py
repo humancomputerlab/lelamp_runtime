@@ -138,6 +138,36 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(settings.console_start_trigger_s, 0.12)
         self.assertEqual(settings.voice_state_path, "/tmp/custom-voice-state.json")
 
+    def test_manager_defaults_follow_sidecar_contract(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = load_runtime_settings()
+
+        self.assertEqual(settings.manager_provider, "glm")
+        self.assertIsNone(settings.manager_api_key)
+        self.assertEqual(settings.manager_model, "glm-4.5-air")
+        self.assertIsNone(settings.manager_base_url)
+        self.assertEqual(settings.item_store_path, "/tmp/lelamp-items.jsonl")
+
+    def test_manager_env_overrides_and_key_fallbacks_are_loaded(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "LELAMP_MANAGER_PROVIDER": "zhipu",
+                "ZAI_API_KEY": "glm-test-key",
+                "LELAMP_MANAGER_MODEL": "glm-4.5",
+                "LELAMP_MANAGER_BASE_URL": "https://example.invalid/manager",
+                "LELAMP_ITEM_STORE_PATH": "/tmp/custom-items.jsonl",
+            },
+            clear=True,
+        ):
+            settings = load_runtime_settings()
+
+        self.assertEqual(settings.manager_provider, "glm")
+        self.assertEqual(settings.manager_api_key, "glm-test-key")
+        self.assertEqual(settings.manager_model, "glm-4.5")
+        self.assertEqual(settings.manager_base_url, "https://example.invalid/manager")
+        self.assertEqual(settings.item_store_path, "/tmp/custom-items.jsonl")
+
     def test_explicit_custom_model_base_url_is_preserved(self) -> None:
         with patch.dict(
             os.environ,
