@@ -42,11 +42,13 @@ def compile_scene(scene: Mapping[str, Any]) -> dict[str, list[tuple[str, object]
     validate_scene(scene)
     motion_events: list[tuple[str, object]] = []
     light_events: list[tuple[str, object]] = []
+    has_visible_body_motion = False
 
     for node in scene.get("body", []):
         primitive = node["type"]
         if primitive == "pose":
             motion_events.append(("play", str(node["name"])))
+            has_visible_body_motion = True
             continue
         if primitive == "gesture":
             recording = _GESTURE_RECORDINGS.get(str(node["name"]))
@@ -54,17 +56,25 @@ def compile_scene(scene: Mapping[str, Any]) -> dict[str, list[tuple[str, object]
                 raise ValueError(f"unsupported gesture: {node['name']!r}")
             repeats = int(node.get("repeats", 1))
             motion_events.extend([("play", recording)] * repeats)
+            has_visible_body_motion = True
             continue
         if primitive == "look":
             recording = _LOOK_RECORDINGS.get(str(node["direction"]).lower())
             if recording is None:
                 raise ValueError(f"unsupported look direction: {node['direction']!r}")
             motion_events.append(("play", recording))
+            has_visible_body_motion = True
             continue
         if primitive == "sweep":
             motion_events.append(("play", "wake_up"))
+            has_visible_body_motion = True
             continue
         if primitive == "settle":
+            # AnimationService already interpolates non-idle recordings back to the
+            # idle/home pose. Emitting a second explicit settle right after a
+            # visible motion overrides the first playback too quickly to see it.
+            if has_visible_body_motion:
+                continue
             recording = _SETTLE_RECORDINGS.get(str(node["style"]).lower())
             if recording is None:
                 raise ValueError(f"unsupported settle style: {node['style']!r}")

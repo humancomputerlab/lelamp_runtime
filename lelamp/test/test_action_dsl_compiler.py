@@ -49,3 +49,34 @@ def test_execute_scene_dispatches_compiled_events():
 
     assert animation.calls == [("play", "nod")]
     assert rgb.calls == [("solid", (255, 170, 70))]
+
+
+def test_compile_scene_drops_trailing_settle_after_visible_motion():
+    compiled = compile_scene(
+        {
+            "body": [
+                {"type": "look", "direction": "up"},
+                {"type": "settle", "style": "soft"},
+            ],
+            "light": [],
+        }
+    )
+
+    assert compiled == {
+        "motion": [("play", "wake_up")],
+        "light": [],
+    }
+
+
+def test_compile_scene_keeps_standalone_settle():
+    compiled = compile_scene(
+        {
+            "body": [{"type": "settle", "style": "soft"}],
+            "light": [],
+        }
+    )
+
+    assert compiled == {
+        "motion": [("play", "home_safe")],
+        "light": [],
+    }
