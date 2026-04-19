@@ -13,11 +13,13 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from lelamp.action_dsl.compiler import compile_scene
 from lelamp.action_dsl.executor import execute_compiled_scene
 from lelamp.items.projections import (
+    project_action_compile_result,
+    project_body_state_snapshot,
     project_conversation_reply,
     project_conversation_user_turn,
     project_execution_guardrail_reject,
@@ -26,8 +28,10 @@ from lelamp.items.projections import (
     project_tool_result,
 )
 from lelamp.items.store import ItemStore
-from lelamp.manager.glm_manager import GLMManager
-from lelamp.manager.runtime import ManagerRuntime
+from lelamp.motion_v2 import build_body_state_snapshot, load_default_robot_profile
+from lelamp.motion_v2.compiler import compile_action_program
+from lelamp.motion_v2.critic import critique_program
+from lelamp.motion_v2.executor import execute_compiled_program
 
 from . import ids as _ids
 from .root import ensure_user_memory_root
@@ -41,6 +45,9 @@ _DISABLE_ENV = "LELAMP_MEMORY_DISABLE"
 _MANAGER_SNAPSHOT_ENV = "LELAMP_MANAGER_SNAPSHOT_PATH"
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
+if TYPE_CHECKING:
+    from lelamp.manager.runtime import ManagerRuntime
+
 
 def _runtime_disabled() -> bool:
     value = os.environ.get(_DISABLE_ENV, "").strip().lower()
@@ -53,7 +60,7 @@ class AgentMemoryRuntime:
     writer: Optional[MemoryWriter] = None
     session_handle: Optional[SessionHandle] = None
     item_store: Optional[ItemStore] = None
-    manager_runtime: Optional[ManagerRuntime] = None
+    manager_runtime: Optional["ManagerRuntime"] = None
     animation_service: Any = None
     rgb_service: Any = None
     get_animation_service_error: Optional[Callable[[], Optional[str]]] = None
@@ -328,9 +335,10 @@ class AgentMemoryRuntime:
 
     def _execute_manager_action_items(self, items: list[dict[str, Any]]) -> None:
         for item in items:
-            if item.get("kind") != "action.plan":
-                continue
-            self._execute_action_plan(item)
+            if item.get("kind") == "action.plan":
+                self._execute_action_plan(item)
+            if item.get("kind") == "action.program":
+                self._execute_action_program(item)
 
     def _execute_action_plan(self, item: dict[str, Any]) -> None:
         if self.item_store is None or self.session_handle is None:
@@ -418,6 +426,109 @@ class AgentMemoryRuntime:
             )
         )
 
+    def _execute_action_program(self, item: dict[str, Any]) -> None:
+        if self.item_store is None or self.session_handle is None:
+            return
+
+        payload = item.get("payload") or {}
+        action_item_id = str(item.get("item_id") or "")
+        program = payload.get("program")
+        ts_ms = _ids.current_timestamp_ms()
+
+        if not isinstance(program, dict):
+            self._append_item(
+                project_execution_guardrail_reject(
+                    session_id=self.session_handle.session_id,
+                    action_item_id=action_item_id,
+                    reason="action program is missing a valid program payload",
+                    scene={},
+                    ts_ms=ts_ms,
+                )
+            )
+            return
+
+        current_pose = self._current_animation_pose()
+        if not current_pose:
+            self._append_item(
+                project_execution_guardrail_reject(
+                    session_id=self.session_handle.session_id,
+                    action_item_id=action_item_id,
+                    reason="current pose unavailable for action program execution",
+                    scene={"program": program},
+                    ts_ms=ts_ms,
+                )
+            )
+            return
+
+        pose_norm = {
+            str(joint_name).removesuffix(".pos"): float(value)
+            for joint_name, value in current_pose.items()
+        }
+        profile = load_default_robot_profile()
+        snapshot = build_body_state_snapshot(
+            pose_norm=pose_norm,
+            profile=profile,
+            recent_motion_energy=0.0,
+        )
+        self._append_item(
+            project_body_state_snapshot(
+                session_id=self.session_handle.session_id,
+                snapshot=snapshot,
+                ts_ms=_ids.current_timestamp_ms(),
+            )
+        )
+
+        critique = critique_program(
+            program=program,
+            recent_fingerprints=self._recent_program_fingerprints(
+                current_item_id=action_item_id
+            ),
+        )
+        compiled = compile_action_program(
+            program=program,
+            critique=critique,
+            snapshot=snapshot,
+            profile=profile,
+        )
+        self._append_item(
+            project_action_compile_result(
+                session_id=self.session_handle.session_id,
+                action_item_id=action_item_id,
+                result=compiled,
+                ts_ms=_ids.current_timestamp_ms(),
+            )
+        )
+
+        if compiled.get("decision") == "rejected":
+            self._append_item(
+                project_execution_guardrail_reject(
+                    session_id=self.session_handle.session_id,
+                    action_item_id=action_item_id,
+                    reason=str(compiled.get("reason") or "motion program rejected"),
+                    scene={"program": program},
+                    ts_ms=_ids.current_timestamp_ms(),
+                )
+            )
+            return
+
+        outcome = execute_compiled_program(
+            compiled=compiled,
+            animation_service=self.animation_service,
+            rgb_service=self.rgb_service,
+        )
+        self._append_item(
+            project_execution_result(
+                session_id=self.session_handle.session_id,
+                action_item_id=action_item_id,
+                compiled=compiled,
+                motion_event_count=int(outcome.get("motion_frame_count", 0)),
+                light_event_count=int(outcome.get("light_event_count", 0)),
+                skipped_motion=False,
+                skipped_light=False,
+                ts_ms=_ids.current_timestamp_ms(),
+            )
+        )
+
     def _current_animation_error(self) -> Optional[str]:
         if self.get_animation_service_error is None:
             return None
@@ -426,6 +537,41 @@ class AgentMemoryRuntime:
         except Exception:
             _logger.exception("memory runtime: animation error callback failed")
             return "animation error callback failed"
+
+    def _current_animation_pose(self) -> Optional[dict[str, float]]:
+        if self.animation_service is None:
+            return None
+        try:
+            get_current_pose = getattr(self.animation_service, "get_current_pose", None)
+            if get_current_pose is None:
+                return None
+            pose = get_current_pose()
+        except Exception:
+            _logger.exception("memory runtime: failed to read current pose")
+            return None
+        if not isinstance(pose, dict):
+            return None
+        return pose
+
+    def _recent_program_fingerprints(self, *, current_item_id: str) -> set[str]:
+        if self.item_store is None or self.session_handle is None:
+            return set()
+        fingerprints: set[str] = set()
+        try:
+            items = list(self.item_store.iter_session_items(self.session_handle.session_id))
+        except Exception:
+            _logger.exception("memory runtime: failed to read recent program history")
+            return set()
+        for item in items:
+            if item.get("kind") != "action.program":
+                continue
+            if str(item.get("item_id") or "") == current_item_id:
+                continue
+            payload = item.get("payload") or {}
+            fingerprint = payload.get("fingerprint")
+            if isinstance(fingerprint, str) and fingerprint:
+                fingerprints.add(fingerprint)
+        return fingerprints
 
 
 def _guarded(callback):
@@ -533,10 +679,18 @@ def _build_item_store(settings) -> ItemStore | None:
         return None
 
 
-def _build_manager_runtime(settings, *, user_id: Optional[str], item_store: ItemStore | None) -> ManagerRuntime | None:
+def _build_manager_runtime(
+    settings,
+    *,
+    user_id: Optional[str],
+    item_store: ItemStore | None,
+) -> "ManagerRuntime | None":
     if item_store is None:
         return None
     try:
+        from lelamp.manager.glm_manager import GLMManager
+        from lelamp.manager.runtime import ManagerRuntime
+
         derived_root = ensure_user_memory_root(user_id) / "derived"
         runtime = ManagerRuntime(
             manager=GLMManager(settings=settings),

@@ -749,3 +749,107 @@ def test_record_standalone_playback_attaches_writes_and_closes(monkeypatch):
         ),
         ("close", None),
     ]
+
+
+def test_agent_memory_runtime_executes_action_program_and_records_compile_result(
+    tmp_path,
+) -> None:
+    from lelamp.memory.runtime import AgentMemoryRuntime
+
+    class FakeItemStore:
+        def __init__(self) -> None:
+            self.items = []
+
+        def append(self, item):
+            self.items.append(item)
+
+        def iter_session_items(self, session_id):
+            return [item for item in self.items if item["session_id"] == session_id]
+
+    class FakeAnimation:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def dispatch(self, event_type, payload):
+            self.calls.append((event_type, payload))
+
+        def get_current_pose(self):
+            return {
+                "base_yaw.pos": 0.0,
+                "base_pitch.pos": 35.0,
+                "elbow_pitch.pos": 33.0,
+                "wrist_roll.pos": 90.0,
+                "wrist_pitch.pos": 70.0,
+            }
+
+    item_store = FakeItemStore()
+    runtime = AgentMemoryRuntime(
+        enabled=True,
+        writer=SimpleNamespace(write_conversation=lambda **kwargs: None),
+        session_handle=SimpleNamespace(session_id="sess_2026-04-18_12-00-00"),
+        item_store=item_store,
+    )
+    runtime.bind_action_executor(
+        animation_service=FakeAnimation(),
+        rgb_service=SimpleNamespace(dispatch=lambda *args: None),
+        get_animation_service_error=lambda: None,
+    )
+
+    item_store.append(
+        {
+            "schema": "lelamp.item.v1",
+            "item_id": "itm_program_1",
+            "ts_ms": 1713412800500,
+            "session_id": "sess_2026-04-18_12-00-00",
+            "kind": "action.program",
+            "producer": "manager_sidecar",
+            "payload": {
+                "summary": "Lamp performs a proud upward look.",
+                "program": {
+                    "version": "v2",
+                    "intent": "proud_look_up",
+                    "why": "User asked lamp to look up.",
+                    "expression": {
+                        "attention": "up",
+                        "attitude": "confident",
+                        "emotion": "warm",
+                        "novelty": 0.6,
+                    },
+                    "style": {
+                        "exaggeration": 0.7,
+                        "smoothness": 0.4,
+                        "tension": 0.5,
+                        "tempo": 1.0,
+                        "symmetry_break": 0.2,
+                    },
+                    "settle_policy": {
+                        "return_to_home_bias": 0.5,
+                        "preserve_attention_heading": True,
+                    },
+                    "phases": [
+                        {
+                            "name": "accent",
+                            "duration_ms": 220,
+                            "easing": "ease_in_out",
+                            "joints": {
+                                "base_pitch": {"target": 0.7, "role": "lead"}
+                            },
+                        }
+                    ],
+                    "lighting": {
+                        "mode": "gradient",
+                        "palette": [[120, 180, 255], [255, 255, 255]],
+                    },
+                },
+                "source_item_id": "itm_user_1",
+                "fingerprint": "fp_motion_1",
+            },
+        }
+    )
+
+    runtime._execute_manager_action_items(item_store.items)
+
+    assert [item["kind"] for item in item_store.items][-2:] == [
+        "action.compile_result",
+        "execution.result",
+    ]

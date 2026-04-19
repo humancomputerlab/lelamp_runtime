@@ -111,6 +111,8 @@ class AnimationService:
     def handle_event(self, event_type: str, payload: Any):
         if event_type == "play":
             self._handle_play(payload)
+        elif event_type == "frames":
+            self._handle_frames(payload)
         elif event_type == "startup":
             self._handle_startup(payload)
         else:
@@ -176,6 +178,19 @@ class AnimationService:
         self._current_state = current_pose.copy()
         self._current_recording = f"startup:{recording_name}"
         self._current_actions = startup_actions
+        self._current_frame_index = 0
+        self._interpolation_frames = 0
+        self._interpolation_target = None
+
+    def _handle_frames(self, frames: list[dict[str, float]]) -> None:
+        if not self.robot:
+            print("Robot not connected")
+            return
+
+        self._playback_done.clear()
+        self._pending_playback_completion = False
+        self._current_recording = "frames"
+        self._current_actions = [dict(frame) for frame in frames]
         self._current_frame_index = 0
         self._interpolation_frames = 0
         self._interpolation_target = None
