@@ -139,6 +139,86 @@ def project_action_plan(
     )
 
 
+def project_body_state_snapshot(
+    *,
+    session_id: str,
+    snapshot: Mapping[str, Any],
+    ts_ms: int,
+) -> dict[str, Any]:
+    return build_item(
+        kind="body.state_snapshot",
+        producer="action_executor",
+        session_id=session_id,
+        payload=_normalize_json_like(snapshot),
+        ts_ms=ts_ms,
+        item_id=_item_id("body_state_snapshot"),
+    )
+
+
+def project_action_program(
+    *,
+    session_id: str,
+    summary: str,
+    program: Mapping[str, Any],
+    source_item_id: str | None,
+    fingerprint: str,
+    ts_ms: int,
+) -> dict[str, Any]:
+    return build_item(
+        kind="action.program",
+        producer="manager_sidecar",
+        session_id=session_id,
+        payload={
+            "summary": summary,
+            "program": _normalize_json_like(program),
+            "source_item_id": source_item_id,
+            "fingerprint": fingerprint,
+        },
+        ts_ms=ts_ms,
+        item_id=_item_id("action_program"),
+    )
+
+
+def project_action_critique(
+    *,
+    session_id: str,
+    action_item_id: str,
+    critique: Mapping[str, Any],
+    ts_ms: int,
+) -> dict[str, Any]:
+    return build_item(
+        kind="action.critique",
+        producer="manager_sidecar",
+        session_id=session_id,
+        payload={
+            "action_item_id": action_item_id,
+            "critique": _normalize_json_like(critique),
+        },
+        ts_ms=ts_ms,
+        item_id=_item_id("action_critique"),
+    )
+
+
+def project_action_compile_result(
+    *,
+    session_id: str,
+    action_item_id: str,
+    result: Mapping[str, Any],
+    ts_ms: int,
+) -> dict[str, Any]:
+    return build_item(
+        kind="action.compile_result",
+        producer="action_executor",
+        session_id=session_id,
+        payload={
+            "action_item_id": action_item_id,
+            "result": _normalize_json_like(result),
+        },
+        ts_ms=ts_ms,
+        item_id=_item_id("action_compile_result"),
+    )
+
+
 def project_execution_result(
     *,
     session_id: str,

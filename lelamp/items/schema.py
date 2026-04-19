@@ -19,6 +19,10 @@ ITEM_KINDS = frozenset(
         "memory.episode_summary",
         "scene.proposal",
         "action.plan",
+        "body.state_snapshot",
+        "action.program",
+        "action.critique",
+        "action.compile_result",
         "execution.result",
         "execution.guardrail_reject",
     }
