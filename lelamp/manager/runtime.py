@@ -7,7 +7,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from lelamp.items.projections import project_action_plan, project_scene_proposal
+from lelamp.items.projections import (
+    project_action_plan,
+    project_action_program,
+    project_scene_proposal,
+)
 from lelamp.items.store import ItemStore
 from lelamp.memory import ids as memory_ids
 from lelamp.memory.derived import DerivedMemoryStore
@@ -50,6 +54,14 @@ class ManagerRuntime:
         items: list[dict[str, Any]],
         raw_output: dict[str, Any],
     ) -> None:
+        action_program = raw_output.get("_action_program")
+        if isinstance(action_program, dict):
+            self._emit_action_program_item(
+                session_id=session_id,
+                items=items,
+                proposal=action_program,
+            )
+
         proposal = raw_output.get("_scene_proposal")
         if not isinstance(proposal, dict):
             return
@@ -66,7 +78,7 @@ class ManagerRuntime:
             source_item_id = candidate if isinstance(candidate, str) and candidate else None
 
         fingerprint = _scene_fingerprint(scene)
-        if self._has_existing_action_plan(
+        if self._has_existing_generated_action(
             session_id=session_id,
             source_item_id=source_item_id,
             fingerprint=fingerprint,
@@ -94,7 +106,47 @@ class ManagerRuntime:
         self._item_store.append(scene_item)
         self._item_store.append(action_item)
 
-    def _has_existing_action_plan(
+    def _emit_action_program_item(
+        self,
+        *,
+        session_id: str,
+        items: list[dict[str, Any]],
+        proposal: dict[str, Any],
+    ) -> None:
+        program = proposal.get("program")
+        if not isinstance(program, dict):
+            return
+
+        summary = (
+            str(proposal.get("summary") or "").strip()
+            or "Manager proposed a motion program."
+        )
+        source_item_id = proposal.get("source_item_id")
+        if not isinstance(source_item_id, str) or not source_item_id:
+            latest_user_turn = _latest_user_turn(items)
+            candidate = (latest_user_turn or {}).get("item_id")
+            source_item_id = candidate if isinstance(candidate, str) and candidate else None
+
+        fingerprint = _scene_fingerprint(program)
+        if self._has_existing_generated_action(
+            session_id=session_id,
+            source_item_id=source_item_id,
+            fingerprint=fingerprint,
+        ):
+            return
+
+        ts_ms = _proposal_ts_ms(proposal, items)
+        action_item = project_action_program(
+            session_id=session_id,
+            summary=summary,
+            program=program,
+            source_item_id=source_item_id,
+            fingerprint=fingerprint,
+            ts_ms=ts_ms,
+        )
+        self._item_store.append(action_item)
+
+    def _has_existing_generated_action(
         self,
         *,
         session_id: str,
@@ -102,7 +154,7 @@ class ManagerRuntime:
         fingerprint: str,
     ) -> bool:
         for item in self._item_store.iter_session_items(session_id):
-            if item.get("kind") != "action.plan":
+            if item.get("kind") not in {"action.plan", "action.program"}:
                 continue
             payload = item.get("payload") or {}
             if source_item_id and payload.get("source_item_id") == source_item_id:

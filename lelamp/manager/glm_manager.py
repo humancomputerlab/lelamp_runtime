@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from lelamp.runtime_config import RuntimeSettings
+if TYPE_CHECKING:
+    from lelamp.runtime_config import RuntimeSettings
 
 
 class GLMManager:
-    def __init__(self, *, settings: RuntimeSettings) -> None:
+    def __init__(self, *, settings: "RuntimeSettings") -> None:
         self._settings = settings
 
     @property
-    def settings(self) -> RuntimeSettings:
+    def settings(self) -> "RuntimeSettings":
         return self._settings
 
     def process(
@@ -29,9 +30,12 @@ class GLMManager:
         )
         text = str((((last_user_turn or {}).get("payload") or {}).get("text", "")) or "").strip()
         profile_summary = f"Recent user theme: {text}".strip()
-        scene_proposal = _scene_proposal_for_text(text)
+        action_program = _action_program_for_text(text)
+        scene_proposal = _scene_proposal_for_text(text) if action_program is None else None
         scene_priors = {}
-        if scene_proposal is not None:
+        if action_program is not None:
+            scene_priors = {action_program["intent"]: list(action_program["priors"])}
+        elif scene_proposal is not None:
             scene_priors = {scene_proposal["intent"]: list(scene_proposal["priors"])}
 
         result = {
@@ -41,6 +45,12 @@ class GLMManager:
             "banned_patterns": ["repeat same scene twice in a row"],
             "updated_at_ms": int(time.time() * 1000),
         }
+        if action_program is not None:
+            result["_action_program"] = {
+                "summary": action_program["summary"],
+                "program": action_program["program"],
+                "source_item_id": (last_user_turn or {}).get("item_id"),
+            }
         if scene_proposal is not None:
             result["_scene_proposal"] = {
                 "summary": scene_proposal["summary"],
@@ -48,6 +58,64 @@ class GLMManager:
                 "source_item_id": (last_user_turn or {}).get("item_id"),
             }
         return result
+
+
+def _action_program_for_text(text: str) -> dict[str, Any] | None:
+    lowered = text.lower()
+    if _contains_any(lowered, text, "抬头", "仰头", "look up", "往上看", "向上看"):
+        return {
+            "intent": "proud_look_up",
+            "priors": ["cool gradient", "upward sweep"],
+            "summary": "User requested a confident upward attention shift.",
+            "program": {
+                "version": "v2",
+                "intent": "proud_look_up",
+                "why": "User asked the lamp to look up.",
+                "expression": {
+                    "attention": "up",
+                    "attitude": "confident",
+                    "emotion": "warm",
+                    "novelty": 0.62,
+                },
+                "style": {
+                    "exaggeration": 0.74,
+                    "smoothness": 0.38,
+                    "tension": 0.52,
+                    "tempo": 1.0,
+                    "symmetry_break": 0.18,
+                },
+                "settle_policy": {
+                    "return_to_home_bias": 0.55,
+                    "preserve_attention_heading": True,
+                },
+                "phases": [
+                    {
+                        "name": "prepare",
+                        "duration_ms": 140,
+                        "easing": "ease_out",
+                        "joints": {
+                            "base_pitch": {"target": -0.12, "role": "lead"},
+                            "elbow_pitch": {"target": 0.06, "role": "support"},
+                        },
+                    },
+                    {
+                        "name": "accent",
+                        "duration_ms": 220,
+                        "easing": "ease_in_out",
+                        "joints": {
+                            "base_pitch": {"target": 0.70, "role": "lead"},
+                            "wrist_pitch": {"target": 0.14, "role": "support"},
+                            "wrist_roll": {"target": 0.06, "role": "accent"},
+                        },
+                    },
+                ],
+                "lighting": {
+                    "mode": "gradient",
+                    "palette": [[120, 180, 255], [255, 255, 255]],
+                },
+            },
+        }
+    return None
 
 
 def _scene_proposal_for_text(text: str) -> dict[str, Any] | None:

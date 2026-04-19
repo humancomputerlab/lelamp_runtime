@@ -75,6 +75,33 @@ def test_glm_manager_builds_scene_proposal_for_dance_request():
     assert snapshot["scene_priors"]["playful"] == ["sparkle palette", "happy wiggle"]
 
 
+def test_glm_manager_builds_action_program_for_upward_look_request():
+    manager = GLMManager(settings=SimpleNamespace())
+
+    snapshot = manager.process(
+        items=[
+            {
+                "kind": "conversation.user_turn",
+                "item_id": "itm_user_1",
+                "payload": {"text": "抬头看看我"},
+            }
+        ],
+        previous_snapshot=None,
+    )
+
+    assert (
+        snapshot["_action_program"]["summary"]
+        == "User requested a confident upward attention shift."
+    )
+    assert snapshot["_action_program"]["program"]["intent"] == "proud_look_up"
+    assert (
+        snapshot["_action_program"]["program"]["phases"][0]["joints"]["base_pitch"][
+            "role"
+        ]
+        == "lead"
+    )
+
+
 def test_manager_runtime_emits_scene_and_action_items_for_manager_proposal(tmp_path):
     session_id = "sess_2026-04-19_20-00-00"
     user_turn = project_conversation_user_turn(
@@ -152,3 +179,73 @@ def test_manager_runtime_skips_duplicate_action_plan_for_same_user_turn(tmp_path
 
     emitted = list(runtime._item_store.iter_session_items(session_id))
     assert [item["kind"] for item in emitted] == ["scene.proposal", "action.plan"]
+
+
+def test_manager_runtime_emits_action_program_item_for_manager_output(tmp_path):
+    session_id = "sess_2026-04-19_20-00-00"
+    user_turn = project_conversation_user_turn(
+        session_id=session_id,
+        text="抬头看看我",
+        ts_ms=1776500000000,
+    )
+
+    class FakeManager:
+        def process(self, *, items, previous_snapshot):
+            return {
+                "profile_summary": "Recent user theme: 抬头看看我",
+                "preference_hints": [],
+                "scene_priors": {"look_up": ["cool gradient"]},
+                "banned_patterns": [],
+                "updated_at_ms": 1776500000100,
+                "_action_program": {
+                    "summary": "User requested a confident upward attention shift.",
+                    "program": {
+                        "version": "v2",
+                        "intent": "proud_look_up",
+                        "why": "User asked lamp to look up.",
+                        "expression": {
+                            "attention": "up",
+                            "attitude": "confident",
+                            "emotion": "warm",
+                            "novelty": 0.6,
+                        },
+                        "style": {
+                            "exaggeration": 0.7,
+                            "smoothness": 0.4,
+                            "tension": 0.5,
+                            "tempo": 1.0,
+                            "symmetry_break": 0.2,
+                        },
+                        "settle_policy": {
+                            "return_to_home_bias": 0.5,
+                            "preserve_attention_heading": True,
+                        },
+                        "phases": [
+                            {
+                                "name": "accent",
+                                "duration_ms": 220,
+                                "easing": "ease_in_out",
+                                "joints": {
+                                    "base_pitch": {"target": 0.7, "role": "lead"}
+                                },
+                            }
+                        ],
+                        "lighting": {
+                            "mode": "gradient",
+                            "palette": [[120, 180, 255], [255, 255, 255]],
+                        },
+                    },
+                    "source_item_id": user_turn["item_id"],
+                },
+            }
+
+    runtime = ManagerRuntime(
+        manager=FakeManager(),
+        item_store_path=tmp_path / "items.jsonl",
+        derived_root=tmp_path / "memory",
+    )
+    runtime.process_once(session_id=session_id, items=[user_turn])
+
+    emitted = list(runtime._item_store.iter_session_items(session_id))
+    assert [item["kind"] for item in emitted] == ["action.program"]
+    assert emitted[0]["payload"]["program"]["intent"] == "proud_look_up"
