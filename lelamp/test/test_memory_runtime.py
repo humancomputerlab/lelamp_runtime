@@ -479,6 +479,211 @@ def test_agent_memory_runtime_records_auto_expression_fallback():
     )
 
 
+def test_agent_memory_runtime_executes_manager_action_plan_and_records_result():
+    from lelamp.memory.runtime import AgentMemoryRuntime
+
+    class FakeWriter:
+        def write_conversation(self, **kwargs):
+            return None
+
+    class FakeItemStore:
+        def __init__(self):
+            self.items = []
+
+        def append(self, item):
+            self.items.append(item)
+
+        def iter_session_items(self, session_id):
+            return [item for item in self.items if item["session_id"] == session_id]
+
+    class FakeManagerRuntime:
+        def __init__(self, item_store):
+            self.item_store = item_store
+
+        def process_once(self, *, session_id, items):
+            self.item_store.append(
+                {
+                    "schema": "lelamp.item.v1",
+                    "item_id": "itm_action_1",
+                    "ts_ms": 1713412800500,
+                    "session_id": session_id,
+                    "kind": "action.plan",
+                    "producer": "manager_sidecar",
+                    "payload": {
+                        "summary": "User requested a playful dance response.",
+                        "scene": {
+                            "body": [{"type": "gesture", "name": "happy", "intensity": 0.8, "repeats": 2}],
+                            "light": [{"type": "sparkle", "palette": [[255, 120, 40], [255, 220, 90], [70, 255, 120]]}],
+                        },
+                        "source_item_id": items[0]["item_id"],
+                        "scene_item_id": "itm_scene_1",
+                        "fingerprint": "dance-scene-v1",
+                    },
+                }
+            )
+            return {
+                "profile_summary": "updated",
+                "preference_hints": [],
+                "scene_priors": {"playful": ["sparkle palette", "happy wiggle"]},
+                "banned_patterns": [],
+                "updated_at_ms": 1,
+            }
+
+    class FakeSession:
+        def __init__(self):
+            self.callbacks = {}
+
+        def on(self, event, callback=None):
+            self.callbacks[event] = callback
+            return callback
+
+    class _Service:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def dispatch(self, event_type, payload):
+            self.calls.append((event_type, payload))
+
+    item_store = FakeItemStore()
+    animation = _Service()
+    rgb = _Service()
+    runtime = AgentMemoryRuntime(
+        enabled=True,
+        writer=FakeWriter(),
+        session_handle=SimpleNamespace(session_id="sess_2026-04-18_12-00-00"),
+        item_store=item_store,
+        manager_runtime=FakeManagerRuntime(item_store),
+    )
+    runtime.bind_action_executor(
+        animation_service=animation,
+        rgb_service=rgb,
+        get_animation_service_error=lambda: None,
+    )
+    session = FakeSession()
+
+    runtime.install_session_listeners(
+        session,
+        model_provider="qwen",
+        model_name="qwen3.5-omni-plus-realtime",
+    )
+
+    session.callbacks["user_input_transcribed"](
+        SimpleNamespace(
+            transcript="来跳个舞给我看一下",
+            is_final=True,
+            created_at=1713412800.1,
+        )
+    )
+    session.callbacks["conversation_item_added"](
+        SimpleNamespace(
+            item=SimpleNamespace(role="assistant", text_content="看我给你来个开心摇摆。"),
+            created_at=1713412800.4,
+        )
+    )
+
+    assert animation.calls == [("play", "happy_wiggle"), ("play", "happy_wiggle")]
+    assert rgb.calls == [("paint", [(255, 120, 40), (255, 220, 90), (70, 255, 120)])]
+    assert [item["kind"] for item in item_store.items] == [
+        "conversation.user_turn",
+        "conversation.reply",
+        "action.plan",
+        "execution.result",
+    ]
+
+
+def test_agent_memory_runtime_records_guardrail_reject_for_invalid_manager_scene():
+    from lelamp.memory.runtime import AgentMemoryRuntime
+
+    class FakeWriter:
+        def write_conversation(self, **kwargs):
+            return None
+
+    class FakeItemStore:
+        def __init__(self):
+            self.items = []
+
+        def append(self, item):
+            self.items.append(item)
+
+        def iter_session_items(self, session_id):
+            return [item for item in self.items if item["session_id"] == session_id]
+
+    class FakeManagerRuntime:
+        def __init__(self, item_store):
+            self.item_store = item_store
+
+        def process_once(self, *, session_id, items):
+            self.item_store.append(
+                {
+                    "schema": "lelamp.item.v1",
+                    "item_id": "itm_action_2",
+                    "ts_ms": 1713412800500,
+                    "session_id": session_id,
+                    "kind": "action.plan",
+                    "producer": "manager_sidecar",
+                    "payload": {
+                        "summary": "bad scene",
+                        "scene": {"body": [{"type": "servo_frame", "angles": [1, 2, 3]}], "light": []},
+                        "source_item_id": items[0]["item_id"],
+                        "scene_item_id": "itm_scene_2",
+                        "fingerprint": "bad-scene-v1",
+                    },
+                }
+            )
+            return {
+                "profile_summary": "updated",
+                "preference_hints": [],
+                "scene_priors": {},
+                "banned_patterns": [],
+                "updated_at_ms": 1,
+            }
+
+    class FakeSession:
+        def __init__(self):
+            self.callbacks = {}
+
+        def on(self, event, callback=None):
+            self.callbacks[event] = callback
+            return callback
+
+    item_store = FakeItemStore()
+    runtime = AgentMemoryRuntime(
+        enabled=True,
+        writer=FakeWriter(),
+        session_handle=SimpleNamespace(session_id="sess_2026-04-18_12-00-00"),
+        item_store=item_store,
+        manager_runtime=FakeManagerRuntime(item_store),
+    )
+    session = FakeSession()
+
+    runtime.install_session_listeners(
+        session,
+        model_provider="qwen",
+        model_name="qwen3.5-omni-plus-realtime",
+    )
+
+    session.callbacks["user_input_transcribed"](
+        SimpleNamespace(
+            transcript="来个危险动作",
+            is_final=True,
+            created_at=1713412800.1,
+        )
+    )
+    session.callbacks["conversation_item_added"](
+        SimpleNamespace(
+            item=SimpleNamespace(role="assistant", text_content="不行，这个动作不安全。"),
+            created_at=1713412800.4,
+        )
+    )
+
+    assert [item["kind"] for item in item_store.items] == [
+        "conversation.user_turn",
+        "conversation.reply",
+        "action.plan",
+        "execution.guardrail_reject",
+    ]
+
+
 def test_record_standalone_playback_attaches_writes_and_closes(monkeypatch):
     from lelamp.memory import runtime as memruntime
 

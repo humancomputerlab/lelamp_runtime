@@ -123,8 +123,9 @@ runtime 现在多了一条独立于 realtime speaker 的慢速 sidecar 路径：
 
 - `speaker` 继续负责低延迟语音回复
 - `item layer` 把用户发言、回复、tool invoke/result 镜像成 `lelamp.item.v1` JSONL
-- `manager` 读取当前 session items，生成派生 snapshot
+- `manager` 读取当前 session items，生成派生 snapshot，并在命中意图时追加 `scene.proposal` / `action.plan`
 - `action DSL` 先约束 scene primitive，再 lower 到现有 recording 和 RGB `solid` / `paint`
+- `action executor` 会消费新增的 `action.plan`，把通过校验的 scene 真正 dispatch 到电机和灯光服务，并写回 `execution.result` / `execution.guardrail_reject`
 
 这层默认不会替代原始 memory ledger。`events.jsonl` 仍然是 source of truth，manager snapshot 只是可重建的 derived sidecar。
 
@@ -142,7 +143,9 @@ LELAMP_ITEM_STORE_PATH=/tmp/lelamp-items.jsonl
 
 - manager snapshot 默认写到用户 memory 根目录下的 `derived/manager_snapshot.v1.json`
 - speaker prompt 启动时会优先尝试加载这个 snapshot，再拼接 memory header
+- manager 现在可以根据对话自动生成安全 scene plan，例如跳舞、抬头、左右看、点头这类请求
 - scene plan 当前只会编译到现有安全能力，不会直接下发原始舵机轨迹
+- 当前电机执行面仍然是 `play(recording_name)`，所以 `speed/tempo/amplitude/exaggeration` 这些连续控制轴还没有真正下沉到电机层；现阶段会先通过 scene 选择、重复次数和灯光样式来表达
 
 ## Pi 5 LED 路径
 

@@ -13,11 +13,15 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
+from lelamp.action_dsl.compiler import compile_scene
+from lelamp.action_dsl.executor import execute_compiled_scene
 from lelamp.items.projections import (
     project_conversation_reply,
     project_conversation_user_turn,
+    project_execution_guardrail_reject,
+    project_execution_result,
     project_tool_invoke,
     project_tool_result,
 )
@@ -50,6 +54,9 @@ class AgentMemoryRuntime:
     session_handle: Optional[SessionHandle] = None
     item_store: Optional[ItemStore] = None
     manager_runtime: Optional[ManagerRuntime] = None
+    animation_service: Any = None
+    rgb_service: Any = None
+    get_animation_service_error: Optional[Callable[[], Optional[str]]] = None
     _closed: bool = field(default=False, init=False, repr=False)
     _pending_user_text: Optional[str] = field(default=None, init=False, repr=False)
     _pending_user_ts_ms: Optional[int] = field(default=None, init=False, repr=False)
@@ -82,6 +89,17 @@ class AgentMemoryRuntime:
                 self.manager_runtime.flush()
             except Exception:
                 _logger.exception("memory runtime: failed to flush manager snapshot")
+
+    def bind_action_executor(
+        self,
+        *,
+        animation_service: Any = None,
+        rgb_service: Any = None,
+        get_animation_service_error: Optional[Callable[[], Optional[str]]] = None,
+    ) -> None:
+        self.animation_service = animation_service
+        self.rgb_service = rgb_service
+        self.get_animation_service_error = get_animation_service_error
 
     def install_session_listeners(
         self,
@@ -298,12 +316,116 @@ class AgentMemoryRuntime:
             return
         try:
             items = list(self.item_store.iter_session_items(self.session_handle.session_id))
+            previous_count = len(items)
             self.manager_runtime.process_once(
                 session_id=self.session_handle.session_id,
                 items=items,
             )
+            updated_items = list(self.item_store.iter_session_items(self.session_handle.session_id))
+            self._execute_manager_action_items(updated_items[previous_count:])
         except Exception:
             _logger.exception("memory runtime: manager sidecar processing failed")
+
+    def _execute_manager_action_items(self, items: list[dict[str, Any]]) -> None:
+        for item in items:
+            if item.get("kind") != "action.plan":
+                continue
+            self._execute_action_plan(item)
+
+    def _execute_action_plan(self, item: dict[str, Any]) -> None:
+        if self.item_store is None or self.session_handle is None:
+            return
+
+        payload = item.get("payload") or {}
+        action_item_id = str(item.get("item_id") or "")
+        scene = payload.get("scene")
+        ts_ms = _ids.current_timestamp_ms()
+        if not isinstance(scene, dict):
+            self._append_item(
+                project_execution_guardrail_reject(
+                    session_id=self.session_handle.session_id,
+                    action_item_id=action_item_id,
+                    reason="action plan is missing a valid scene",
+                    scene={},
+                    ts_ms=ts_ms,
+                )
+            )
+            return
+
+        try:
+            compiled = compile_scene(scene)
+        except Exception as exc:
+            self._append_item(
+                project_execution_guardrail_reject(
+                    session_id=self.session_handle.session_id,
+                    action_item_id=action_item_id,
+                    reason=str(exc),
+                    scene=scene,
+                    ts_ms=ts_ms,
+                )
+            )
+            return
+
+        animation_error = self._current_animation_error()
+        motion_service = self.animation_service if animation_error is None else None
+        rgb_service = self.rgb_service
+        skipped_motion = bool(compiled.get("motion")) and motion_service is None
+        skipped_light = bool(compiled.get("light")) and rgb_service is None
+
+        if skipped_motion and skipped_light:
+            reason = "no action executor targets are available"
+            if animation_error:
+                reason = f"motion unavailable: {animation_error}"
+            self._append_item(
+                project_execution_guardrail_reject(
+                    session_id=self.session_handle.session_id,
+                    action_item_id=action_item_id,
+                    reason=reason,
+                    scene=scene,
+                    ts_ms=ts_ms,
+                )
+            )
+            return
+
+        try:
+            execute_compiled_scene(
+                compiled,
+                animation_service=motion_service,
+                rgb_service=rgb_service,
+            )
+        except Exception as exc:
+            self._append_item(
+                project_execution_guardrail_reject(
+                    session_id=self.session_handle.session_id,
+                    action_item_id=action_item_id,
+                    reason=str(exc),
+                    scene=scene,
+                    ts_ms=ts_ms,
+                )
+            )
+            return
+
+        self._append_item(
+            project_execution_result(
+                session_id=self.session_handle.session_id,
+                action_item_id=action_item_id,
+                compiled=compiled,
+                motion_event_count=len(compiled.get("motion", [])),
+                light_event_count=len(compiled.get("light", [])),
+                skipped_motion=skipped_motion,
+                skipped_light=skipped_light,
+                ts_ms=ts_ms,
+            )
+        )
+
+    def _current_animation_error(self) -> Optional[str]:
+        if self.get_animation_service_error is None:
+            return None
+        try:
+            return self.get_animation_service_error()
+        except Exception:
+            _logger.exception("memory runtime: animation error callback failed")
+            return "animation error callback failed"
 
 
 def _guarded(callback):

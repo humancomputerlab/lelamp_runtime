@@ -87,3 +87,113 @@ def project_tool_result(
         ts_ms=ts_ms,
         item_id=_item_id("tool_result"),
     )
+
+
+def project_scene_proposal(
+    *,
+    session_id: str,
+    summary: str,
+    scene: Mapping[str, Any],
+    source_item_id: str | None,
+    fingerprint: str,
+    ts_ms: int,
+) -> dict[str, Any]:
+    return build_item(
+        kind="scene.proposal",
+        producer="manager_sidecar",
+        session_id=session_id,
+        payload={
+            "summary": summary,
+            "scene": _normalize_json_like(scene),
+            "source_item_id": source_item_id,
+            "fingerprint": fingerprint,
+        },
+        ts_ms=ts_ms,
+        item_id=_item_id("scene_proposal"),
+    )
+
+
+def project_action_plan(
+    *,
+    session_id: str,
+    summary: str,
+    scene: Mapping[str, Any],
+    source_item_id: str | None,
+    scene_item_id: str,
+    fingerprint: str,
+    ts_ms: int,
+) -> dict[str, Any]:
+    return build_item(
+        kind="action.plan",
+        producer="manager_sidecar",
+        session_id=session_id,
+        payload={
+            "summary": summary,
+            "scene": _normalize_json_like(scene),
+            "source_item_id": source_item_id,
+            "scene_item_id": scene_item_id,
+            "fingerprint": fingerprint,
+        },
+        ts_ms=ts_ms,
+        item_id=_item_id("action_plan"),
+    )
+
+
+def project_execution_result(
+    *,
+    session_id: str,
+    action_item_id: str,
+    compiled: Mapping[str, Any],
+    motion_event_count: int,
+    light_event_count: int,
+    skipped_motion: bool,
+    skipped_light: bool,
+    ts_ms: int,
+) -> dict[str, Any]:
+    return build_item(
+        kind="execution.result",
+        producer="action_executor",
+        session_id=session_id,
+        payload={
+            "action_item_id": action_item_id,
+            "compiled": _normalize_json_like(compiled),
+            "motion_event_count": motion_event_count,
+            "light_event_count": light_event_count,
+            "skipped_motion": skipped_motion,
+            "skipped_light": skipped_light,
+        },
+        ts_ms=ts_ms,
+        item_id=_item_id("execution_result"),
+    )
+
+
+def project_execution_guardrail_reject(
+    *,
+    session_id: str,
+    action_item_id: str,
+    reason: str,
+    scene: Mapping[str, Any] | None,
+    ts_ms: int,
+) -> dict[str, Any]:
+    return build_item(
+        kind="execution.guardrail_reject",
+        producer="action_executor",
+        session_id=session_id,
+        payload={
+            "action_item_id": action_item_id,
+            "reason": reason,
+            "scene": _normalize_json_like(scene or {}),
+        },
+        ts_ms=ts_ms,
+        item_id=_item_id("execution_guardrail_reject"),
+    )
+
+
+def _normalize_json_like(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _normalize_json_like(inner) for key, inner in value.items()}
+    if isinstance(value, tuple):
+        return [_normalize_json_like(inner) for inner in value]
+    if isinstance(value, list):
+        return [_normalize_json_like(inner) for inner in value]
+    return value

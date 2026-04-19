@@ -274,6 +274,13 @@ async def entrypoint(ctx: agents.JobContext):
     settings = load_runtime_settings()
     memory_runtime = bootstrap_agent_runtime(settings)
     agent = LeLamp(settings=settings)
+    bind_action_executor = getattr(memory_runtime, "bind_action_executor", None)
+    if callable(bind_action_executor):
+        bind_action_executor(
+            animation_service=agent.animation_service,
+            rgb_service=agent.rgb_service,
+            get_animation_service_error=lambda: agent.animation_service_error,
+        )
     if hasattr(agent, "animation_service") and hasattr(agent, "settings"):
         fallback_callback = getattr(
             memory_runtime,
