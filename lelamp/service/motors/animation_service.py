@@ -263,6 +263,17 @@ class AnimationService:
                 recordings.append(recording_name)
         
         return sorted(recordings)
+
+    def get_current_pose(self) -> Dict[str, float] | None:
+        if self._current_state is not None:
+            return self._current_state.copy()
+
+        current_pose = self._read_current_pose()
+        if current_pose is None:
+            return None
+
+        self._current_state = current_pose.copy()
+        return current_pose
     
     def _load_recording(self, recording_name: str) -> Optional[List[Dict[str, float]]]:
         """Load a recording from cache or file"""
