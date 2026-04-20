@@ -100,6 +100,15 @@ class VoiceProfileTests(unittest.TestCase):
         self.assertIn("不要输出像“(shock + 白光)”这样的舞台提示", instructions)
         self.assertNotIn("关心某人 → shy + 暖黄光", instructions)
 
+    def test_chinese_profile_bans_pseudo_tool_markup(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = load_runtime_settings()
+
+        instructions = build_agent_instructions(settings)
+
+        self.assertIn("<express>", instructions)
+        self.assertIn("不要把它们当台词输出", instructions)
+
     def test_memory_header_is_prepended_before_voice_profile(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             settings = load_runtime_settings()

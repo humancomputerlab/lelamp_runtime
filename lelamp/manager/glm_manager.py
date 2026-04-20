@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -62,7 +63,11 @@ class GLMManager:
 
 def _action_program_for_text(text: str) -> dict[str, Any] | None:
     lowered = text.lower()
-    if _contains_any(lowered, text, "抬头", "仰头", "look up", "往上看", "向上看"):
+    if _contains_any(lowered, text, "抬头", "仰头", "look up", "往上看", "向上看") or _matches_any(
+        text,
+        r"抬.?头",
+        r"头抬.?一下",
+    ):
         return {
             "intent": "proud_look_up",
             "priors": ["cool gradient", "upward sweep"],
@@ -120,7 +125,25 @@ def _action_program_for_text(text: str) -> dict[str, Any] | None:
 
 def _scene_proposal_for_text(text: str) -> dict[str, Any] | None:
     lowered = text.lower()
-    if _contains_any(lowered, text, "跳舞", "跳个舞", "舞给我看", "dance", "摇摆", "摇一摇"):
+    if _contains_any(
+        lowered,
+        text,
+        "跳舞",
+        "跳个舞",
+        "舞给我看",
+        "dance",
+        "摇摆",
+        "摇一摇",
+        "来个动作",
+        "玩个动作",
+        "随便来一个",
+        "狂野的动作",
+    ) or _matches_any(
+        text,
+        r"来.?个动作",
+        r"玩.?个动作",
+        r"随便来.?个",
+    ):
         return {
             "intent": "playful",
             "priors": ["sparkle palette", "happy wiggle"],
@@ -185,3 +208,7 @@ def _scene_proposal_for_text(text: str) -> dict[str, Any] | None:
 
 def _contains_any(lowered: str, original: str, *needles: str) -> bool:
     return any(needle in lowered or needle in original for needle in needles)
+
+
+def _matches_any(text: str, *patterns: str) -> bool:
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)

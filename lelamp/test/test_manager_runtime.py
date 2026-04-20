@@ -102,6 +102,41 @@ def test_glm_manager_builds_action_program_for_upward_look_request():
     )
 
 
+def test_glm_manager_recognizes_colloquial_upward_look_request():
+    manager = GLMManager(settings=SimpleNamespace())
+
+    snapshot = manager.process(
+        items=[
+            {
+                "kind": "conversation.user_turn",
+                "item_id": "itm_user_1",
+                "payload": {"text": "抬个头，不要保持两秒钟可以吗？"},
+            }
+        ],
+        previous_snapshot=None,
+    )
+
+    assert snapshot["_action_program"]["program"]["intent"] == "proud_look_up"
+
+
+def test_glm_manager_builds_scene_proposal_for_generic_motion_demo_request():
+    manager = GLMManager(settings=SimpleNamespace())
+
+    snapshot = manager.process(
+        items=[
+            {
+                "kind": "conversation.user_turn",
+                "item_id": "itm_user_1",
+                "payload": {"text": "随便来一个，很狂野的动作。"},
+            }
+        ],
+        previous_snapshot=None,
+    )
+
+    assert snapshot["_scene_proposal"]["summary"] == "User requested a playful dance response."
+    assert snapshot["_scene_proposal"]["scene"]["body"][0]["type"] == "gesture"
+
+
 def test_manager_runtime_emits_scene_and_action_items_for_manager_proposal(tmp_path):
     session_id = "sess_2026-04-19_20-00-00"
     user_turn = project_conversation_user_turn(

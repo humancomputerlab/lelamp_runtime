@@ -409,6 +409,120 @@ def test_agent_memory_runtime_extracts_assistant_text_from_content_objects():
     ]
 
 
+def test_agent_memory_runtime_executes_inline_express_tag_as_real_tool():
+    from lelamp.memory.runtime import AgentMemoryRuntime
+
+    recorded_calls = []
+
+    class FakeWriter:
+        def write_conversation(self, **kwargs):
+            recorded_calls.append(("conversation", kwargs))
+
+        def write_function_tool(self, **kwargs):
+            recorded_calls.append(("function_tool", kwargs))
+
+    class FakeItemStore:
+        def __init__(self):
+            self.items = []
+
+        def append(self, item):
+            self.items.append(item)
+
+        def iter_session_items(self, session_id):
+            return [item for item in self.items if item["session_id"] == session_id]
+
+    class FakeSession:
+        def __init__(self):
+            self.callbacks = {}
+
+        def on(self, event, callback=None):
+            self.callbacks[event] = callback
+            return callback
+
+    class FakeAnimationService:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def dispatch(self, event_type, payload):
+            self.calls.append((event_type, payload))
+
+    class FakeRGBService:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def dispatch(self, event_type, payload):
+            self.calls.append((event_type, payload))
+
+    item_store = FakeItemStore()
+    animation = FakeAnimationService()
+    rgb = FakeRGBService()
+    runtime = AgentMemoryRuntime(
+        enabled=True,
+        writer=FakeWriter(),
+        session_handle=SimpleNamespace(session_id="sess_2026-04-18_12-00-00"),
+        item_store=item_store,
+    )
+    runtime.bind_action_executor(
+        animation_service=animation,
+        rgb_service=rgb,
+        get_animation_service_error=lambda: None,
+    )
+    session = FakeSession()
+
+    runtime.install_session_listeners(
+        session,
+        model_provider="qwen",
+        model_name="qwen3.5-omni-plus-realtime",
+    )
+
+    session.callbacks["user_input_transcribed"](
+        SimpleNamespace(
+            transcript="来个动作",
+            is_final=True,
+            created_at=1713412800.1,
+        )
+    )
+    session.callbacks["conversation_item_added"](
+        SimpleNamespace(
+            item=SimpleNamespace(
+                role="assistant",
+                text_content="<express> happy </express> 好嘞，直接来。",
+            ),
+            created_at=1713412800.4,
+        )
+    )
+
+    assert recorded_calls[0] == (
+        "conversation",
+        {
+            "session_id": "sess_2026-04-18_12-00-00",
+            "source": "voice_agent",
+            "user_text": "来个动作",
+            "assistant_text": "好嘞，直接来。",
+            "user_text_lang": None,
+            "assistant_style": None,
+            "turn_duration_ms": 300,
+            "model_provider": "qwen",
+            "model_name": "qwen3.5-omni-plus-realtime",
+            "ts_ms": 1713412800400,
+        },
+    )
+    function_tool_calls = [entry for entry in recorded_calls if entry[0] == "function_tool"]
+    assert function_tool_calls[0][1]["tool_name"] == "express"
+    assert function_tool_calls[0][1]["args"] == {"style": "happy"}
+    assert function_tool_calls[0][1]["caller"] == "llm_inline_tag"
+    assert function_tool_calls[1][1]["tool_name"] == "express"
+    assert function_tool_calls[1][1]["ok"] is True
+    assert animation.calls == [("play", "happy_wiggle")]
+    assert rgb.calls == [("solid", (70, 255, 120))]
+    assert [item["kind"] for item in item_store.items] == [
+        "conversation.user_turn",
+        "conversation.reply",
+        "conversation.tool_invoke",
+        "conversation.tool_result",
+    ]
+
+
 def test_agent_memory_runtime_records_auto_expression_fallback():
     from lelamp.memory.runtime import AgentMemoryRuntime
 

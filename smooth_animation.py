@@ -280,6 +280,7 @@ async def entrypoint(ctx: agents.JobContext):
             animation_service=agent.animation_service,
             rgb_service=agent.rgb_service,
             get_animation_service_error=lambda: agent.animation_service_error,
+            led_count=agent.settings.led_count,
         )
     if hasattr(agent, "animation_service") and hasattr(agent, "settings"):
         fallback_callback = getattr(

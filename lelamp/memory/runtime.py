@@ -11,12 +11,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from lelamp.action_dsl.compiler import compile_scene
 from lelamp.action_dsl.executor import execute_compiled_scene
+from lelamp.expression_engine import build_expression_plan
 from lelamp.items.projections import (
     project_action_compile_result,
     project_body_state_snapshot,
@@ -44,6 +46,21 @@ _logger = logging.getLogger(__name__)
 _DISABLE_ENV = "LELAMP_MEMORY_DISABLE"
 _MANAGER_SNAPSHOT_ENV = "LELAMP_MANAGER_SNAPSHOT_PATH"
 _TRUE_VALUES = {"1", "true", "yes", "on"}
+_INLINE_EXPRESS_TAG_RE = re.compile(
+    r"<express>\s*([^<]+?)\s*</express>",
+    re.IGNORECASE,
+)
+_INLINE_EXPRESSION_STYLES = {
+    "caring",
+    "worried",
+    "sad",
+    "happy",
+    "curious",
+    "shocked",
+    "calm",
+    "greeting",
+    "celebrate",
+}
 
 if TYPE_CHECKING:
     from lelamp.manager.runtime import ManagerRuntime
@@ -64,6 +81,7 @@ class AgentMemoryRuntime:
     animation_service: Any = None
     rgb_service: Any = None
     get_animation_service_error: Optional[Callable[[], Optional[str]]] = None
+    led_count: int = 64
     _closed: bool = field(default=False, init=False, repr=False)
     _pending_user_text: Optional[str] = field(default=None, init=False, repr=False)
     _pending_user_ts_ms: Optional[int] = field(default=None, init=False, repr=False)
@@ -103,10 +121,13 @@ class AgentMemoryRuntime:
         animation_service: Any = None,
         rgb_service: Any = None,
         get_animation_service_error: Optional[Callable[[], Optional[str]]] = None,
+        led_count: Optional[int] = None,
     ) -> None:
         self.animation_service = animation_service
         self.rgb_service = rgb_service
         self.get_animation_service_error = get_animation_service_error
+        if isinstance(led_count, int) and led_count > 0:
+            self.led_count = led_count
 
     def install_session_listeners(
         self,
@@ -152,6 +173,9 @@ class AgentMemoryRuntime:
             assistant_text = _message_text(item)
             if not assistant_text:
                 return
+            assistant_text, inline_directives = _extract_inline_tool_directives(
+                assistant_text
+            )
 
             assistant_ts_ms = _event_ts_ms(ev)
             assistant_item_ts_ms = assistant_ts_ms or _ids.current_timestamp_ms()
@@ -178,6 +202,10 @@ class AgentMemoryRuntime:
                     text=assistant_text,
                     ts_ms=assistant_item_ts_ms,
                 )
+            )
+            self._execute_inline_tool_directives(
+                directives=inline_directives,
+                ts_ms=assistant_item_ts_ms,
             )
             if isinstance(record, dict):
                 event_id = record.get("event_id")
@@ -256,6 +284,90 @@ class AgentMemoryRuntime:
         session.on("conversation_item_added", _guarded(_on_conversation_item_added))
         session.on("function_tools_executed", _guarded(_on_function_tools_executed))
         self._listeners_installed = True
+
+    def _execute_inline_tool_directives(
+        self,
+        *,
+        directives: list[dict[str, Any]],
+        ts_ms: int,
+    ) -> None:
+        if (
+            not directives
+            or not self.enabled
+            or self._closed
+            or self.writer is None
+            or self.session_handle is None
+        ):
+            return
+
+        for directive in directives:
+            tool_name = str(directive.get("tool_name") or "").strip()
+            args = directive.get("args")
+            if not tool_name or not isinstance(args, dict):
+                continue
+
+            invoke_id = _ids.generate_invoke_id()
+            self.writer.write_function_tool(
+                session_id=self.session_handle.session_id,
+                source="voice_agent",
+                invoke_id=invoke_id,
+                phase="invoke",
+                tool_name=tool_name,
+                args=args,
+                caller="llm_inline_tag",
+                ts_ms=ts_ms,
+            )
+            self._append_item(
+                project_tool_invoke(
+                    session_id=self.session_handle.session_id,
+                    tool_name=tool_name,
+                    args=args,
+                    caller="llm_inline_tag",
+                    invoke_id=invoke_id,
+                    ts_ms=ts_ms,
+                )
+            )
+
+            ok = True
+            error = None
+            try:
+                _execute_inline_tool_directive(
+                    directive,
+                    animation_service=self.animation_service,
+                    rgb_service=self.rgb_service,
+                    animation_service_error=self._current_animation_error(),
+                    led_count=self.led_count,
+                )
+            except Exception as exc:
+                ok = False
+                error = str(exc)
+
+            self.writer.write_function_tool(
+                session_id=self.session_handle.session_id,
+                source="voice_agent",
+                invoke_id=invoke_id,
+                phase="result",
+                tool_name=tool_name,
+                args=args,
+                caller="llm_inline_tag",
+                duration_ms=0,
+                ok=ok,
+                error=error,
+                ts_ms=ts_ms,
+            )
+            self._append_item(
+                project_tool_result(
+                    session_id=self.session_handle.session_id,
+                    tool_name=tool_name,
+                    args=args,
+                    caller="llm_inline_tag",
+                    invoke_id=invoke_id,
+                    duration_ms=0,
+                    ok=ok,
+                    error=error,
+                    ts_ms=ts_ms,
+                )
+            )
 
     def note_auto_expression_fallback(
         self,
@@ -623,6 +735,65 @@ def _content_part_text(part: Any) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _extract_inline_tool_directives(text: str) -> tuple[str, list[dict[str, Any]]]:
+    directives: list[dict[str, Any]] = []
+
+    def _replace(match: re.Match[str]) -> str:
+        raw_value = match.group(1).strip()
+        normalized = raw_value.lower()
+        if normalized in _INLINE_EXPRESSION_STYLES:
+            directives.append(
+                {"tool_name": "express", "args": {"style": normalized}}
+            )
+        elif raw_value:
+            directives.append(
+                {"tool_name": "play_recording", "args": {"recording_name": raw_value}}
+            )
+        return ""
+
+    stripped = _INLINE_EXPRESS_TAG_RE.sub(_replace, text or "")
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    return stripped, directives
+
+
+def _execute_inline_tool_directive(
+    directive: dict[str, Any],
+    *,
+    animation_service: Any,
+    rgb_service: Any,
+    animation_service_error: Optional[str],
+    led_count: int,
+) -> None:
+    tool_name = directive.get("tool_name")
+    args = directive.get("args") or {}
+
+    if tool_name == "express":
+        style = str(args.get("style") or "").strip()
+        plan = build_expression_plan(style, led_count)
+        if plan is None:
+            raise ValueError(f"unknown inline expression style: {style}")
+        if plan.recording_name and animation_service_error is None and animation_service is not None:
+            animation_service.dispatch("play", plan.recording_name)
+        if plan.pattern_rgb and rgb_service is not None:
+            rgb_service.dispatch("paint", plan.pattern_rgb)
+        elif plan.solid_rgb and rgb_service is not None:
+            rgb_service.dispatch("solid", plan.solid_rgb)
+        return
+
+    if tool_name == "play_recording":
+        recording_name = str(args.get("recording_name") or "").strip()
+        if not recording_name:
+            raise ValueError("inline recording name is empty")
+        if animation_service_error is not None:
+            raise RuntimeError(animation_service_error)
+        if animation_service is None:
+            raise RuntimeError("animation service unavailable")
+        animation_service.dispatch("play", recording_name)
+        return
+
+    raise ValueError(f"unsupported inline directive: {tool_name}")
 
 
 def _parse_tool_args(raw: Any) -> dict[str, Any]:
