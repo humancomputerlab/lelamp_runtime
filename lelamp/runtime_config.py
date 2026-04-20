@@ -156,6 +156,7 @@ class RuntimeSettings:
     dashboard_host: str
     dashboard_port: int
     dashboard_poll_ms: int
+    dashboard_expose_transcripts: bool
     model_provider: str
     model_api_key: str | None
     model_base_url: str | None
@@ -203,9 +204,10 @@ def load_runtime_settings() -> RuntimeSettings:
         port=_get_str("LELAMP_PORT", "/dev/ttyACM0"),
         lamp_id=_get_str("LELAMP_ID", "lelamp"),
         fps=_get_int("LELAMP_FPS", 30),
-        dashboard_host=_get_str("LELAMP_DASHBOARD_HOST", "0.0.0.0"),
+        dashboard_host=_get_str("LELAMP_DASHBOARD_HOST", "127.0.0.1"),
         dashboard_port=_get_positive_int("LELAMP_DASHBOARD_PORT", 8765),
         dashboard_poll_ms=_get_positive_int("LELAMP_DASHBOARD_POLL_MS", 400),
+        dashboard_expose_transcripts=_get_bool("LELAMP_DASHBOARD_EXPOSE_TRANSCRIPTS", False),
         model_provider=model_provider,
         model_api_key=_get_model_api_key(model_provider),
         model_base_url=_get_optional_str("MODEL_BASE_URL") or _default_model_base_url(model_provider),

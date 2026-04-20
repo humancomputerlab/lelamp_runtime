@@ -409,10 +409,6 @@ ensure_pi_profile() {
 }
 
 has_voice_runtime_config() {
-  if [[ -z "$LIVEKIT_URL" || -z "$LIVEKIT_API_KEY" || -z "$LIVEKIT_API_SECRET" ]]; then
-    return 1
-  fi
-
   if [[ -n "$MODEL_API_KEY" ]]; then
     return 0
   fi
@@ -425,10 +421,20 @@ has_voice_runtime_config() {
 }
 
 install_post_boot_service() {
+  local resolved_uv_bin="${UV_BIN:-}"
+
+  if [[ -z "$resolved_uv_bin" ]] && command -v uv >/dev/null 2>&1; then
+    resolved_uv_bin="$(command -v uv)"
+  fi
+  if [[ -z "$resolved_uv_bin" && -x "${HOME}/.local/bin/uv" ]]; then
+    resolved_uv_bin="${HOME}/.local/bin/uv"
+  fi
+
   cat >"$POST_BOOT_ENV_FILE" <<EOF
 MODE_SCRIPT=${MODE_SCRIPT}
 RUN_DOWNLOAD_FILES_POSTBOOT=${RUN_DOWNLOAD_FILES_POSTBOOT}
 CHECK_OPENCLAW=${INSTALL_OPENCLAW}
+UV_BIN=${resolved_uv_bin}
 EOF
 
   sudo tee "$POST_BOOT_SERVICE_PATH" >/dev/null <<EOF
@@ -494,6 +500,7 @@ prompt_secret LIVEKIT_API_SECRET "LiveKit API secret (leave blank to fill later)
 if [[ ! -f "$ENV_FILE" ]]; then
   cp "${REPO_ROOT}/.env.example" "$ENV_FILE"
 fi
+chmod 600 "$ENV_FILE" 2>/dev/null || true
 
 upsert_env "LELAMP_ID" "$LAMP_ID"
 upsert_env "LELAMP_PORT" "$LAMP_PORT"
@@ -513,7 +520,7 @@ if [[ -n "$LIVEKIT_API_SECRET" ]]; then upsert_env "LIVEKIT_API_SECRET" "$LIVEKI
 
 resolved_install_service="$INSTALL_LELAMP_SERVICE"
 if [[ "$INSTALL_LELAMP_SERVICE" == "1" ]] && ! has_voice_runtime_config; then
-  log "Realtime model or LiveKit config is incomplete, so the LeLamp boot service will not be enabled yet."
+  log "Realtime model config is incomplete, so the LeLamp boot service will not be enabled yet."
   resolved_install_service="0"
 fi
 

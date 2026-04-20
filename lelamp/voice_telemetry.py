@@ -92,7 +92,9 @@ class VoiceTelemetryStore:
                 json.dumps(self._state, ensure_ascii=False, separators=(",", ":")),
                 encoding="utf-8",
             )
+            temp_path.chmod(0o600)
             temp_path.replace(self._path)
+            self._path.chmod(0o600)
         except OSError:
             return
 
@@ -110,7 +112,12 @@ def configure_voice_telemetry(path: str | Path | None) -> VoiceTelemetryStore:
 
 
 def get_voice_telemetry() -> VoiceTelemetryStore:
-    return configure_voice_telemetry(_DEFAULT_PATH)
+    global _GLOBAL_STORE
+
+    with _GLOBAL_LOCK:
+        if _GLOBAL_STORE is None:
+            _GLOBAL_STORE = VoiceTelemetryStore(_DEFAULT_PATH)
+        return _GLOBAL_STORE
 
 
 def read_voice_telemetry(path: str | Path | None) -> dict[str, Any]:

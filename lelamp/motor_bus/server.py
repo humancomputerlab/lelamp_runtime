@@ -284,6 +284,7 @@ class MotorBusServer:
 
         if not self._ready.is_set():
             logger.warning("motor bus server did not report ready within %.1fs", ready_timeout)
+            self.stop(timeout=ready_timeout or 0.1)
             return
 
         write_sentinel(

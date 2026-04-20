@@ -198,6 +198,7 @@ if [[ ! -f "$REPO_ROOT/.env" ]]; then
   log "Creating .env from .env.example"
   cp "$REPO_ROOT/.env.example" "$REPO_ROOT/.env"
 fi
+chmod 600 "$REPO_ROOT/.env" 2>/dev/null || true
 
 upsert_env "LELAMP_ID" "$LAMP_ID" "$REPO_ROOT/.env"
 upsert_env "LELAMP_PORT" "$LAMP_PORT" "$REPO_ROOT/.env"
@@ -205,6 +206,7 @@ upsert_env "LELAMP_AUDIO_USER" "$USER" "$REPO_ROOT/.env"
 upsert_env "HF_LEROBOT_CALIBRATION" "$HOME/.cache/huggingface/lerobot/calibration" "$REPO_ROOT/.env"
 upsert_env "LELAMP_LED_COUNT" "$LED_COUNT" "$REPO_ROOT/.env"
 upsert_env "LELAMP_LED_PIN" "$LED_PIN" "$REPO_ROOT/.env"
+chmod 600 "$REPO_ROOT/.env" 2>/dev/null || true
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT

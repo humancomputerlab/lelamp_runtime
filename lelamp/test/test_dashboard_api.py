@@ -71,9 +71,10 @@ class FakeBridge:
 class DashboardApiTests(unittest.TestCase):
     def test_get_state_returns_snapshot(self) -> None:
         settings = SimpleNamespace(
-            dashboard_host="0.0.0.0",
+            dashboard_host="127.0.0.1",
             dashboard_port=8765,
             dashboard_poll_ms=400,
+            dashboard_expose_transcripts=False,
         )
         app = create_app(
             settings=settings,
@@ -89,12 +90,15 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("system", response.json())
         self.assertIn("voice", response.json())
+        self.assertIsNone(response.json()["voice"]["last_asr_text"])
+        self.assertIsNone(response.json()["voice"]["last_reply_text"])
 
     def test_post_startup_returns_running_receipt(self) -> None:
         settings = SimpleNamespace(
-            dashboard_host="0.0.0.0",
+            dashboard_host="127.0.0.1",
             dashboard_port=8765,
             dashboard_poll_ms=400,
+            dashboard_expose_transcripts=False,
         )
         app = create_app(
             settings=settings,
@@ -113,9 +117,10 @@ class DashboardApiTests(unittest.TestCase):
 
     def test_post_startup_returns_busy_when_executor_rejects(self) -> None:
         settings = SimpleNamespace(
-            dashboard_host="0.0.0.0",
+            dashboard_host="127.0.0.1",
             dashboard_port=8765,
             dashboard_poll_ms=400,
+            dashboard_expose_transcripts=False,
         )
         app = create_app(
             settings=settings,
@@ -135,9 +140,10 @@ class DashboardApiTests(unittest.TestCase):
 
     def test_get_actions_reports_button_states_and_disables_play_without_recordings(self) -> None:
         settings = SimpleNamespace(
-            dashboard_host="0.0.0.0",
+            dashboard_host="127.0.0.1",
             dashboard_port=8765,
             dashboard_poll_ms=400,
+            dashboard_expose_transcripts=False,
         )
         app = create_app(
             settings=settings,
@@ -160,9 +166,10 @@ class DashboardApiTests(unittest.TestCase):
 
     def test_get_actions_marks_running_action_and_disables_others(self) -> None:
         settings = SimpleNamespace(
-            dashboard_host="0.0.0.0",
+            dashboard_host="127.0.0.1",
             dashboard_port=8765,
             dashboard_poll_ms=400,
+            dashboard_expose_transcripts=False,
         )
         app = create_app(
             settings=settings,
@@ -185,9 +192,10 @@ class DashboardApiTests(unittest.TestCase):
 
     def test_post_solid_light_rejects_rgb_values_out_of_range(self) -> None:
         settings = SimpleNamespace(
-            dashboard_host="0.0.0.0",
+            dashboard_host="127.0.0.1",
             dashboard_port=8765,
             dashboard_poll_ms=400,
+            dashboard_expose_transcripts=False,
         )
         app = create_app(
             settings=settings,
@@ -205,6 +213,66 @@ class DashboardApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["detail"], "RGB values must be between 0 and 255.")
+
+    def test_get_state_hides_transcripts_by_default(self) -> None:
+        settings = SimpleNamespace(
+            dashboard_host="127.0.0.1",
+            dashboard_port=8765,
+            dashboard_poll_ms=400,
+            dashboard_expose_transcripts=False,
+        )
+        store = DashboardStateStore()
+        store.patch(
+            "voice",
+            {
+                "status": "ready",
+                "last_asr_text": "你好",
+                "last_reply_text": "我在",
+            },
+        )
+        app = create_app(
+            settings=settings,
+            store=store,
+            bridge=FakeBridge(),
+            executor=FakeExecutor(),
+            enable_background=False,
+        )
+        client = TestClient(app)
+
+        payload = client.get("/api/state").json()
+
+        self.assertIsNone(payload["voice"]["last_asr_text"])
+        self.assertIsNone(payload["voice"]["last_reply_text"])
+
+    def test_get_state_can_expose_transcripts_when_explicitly_enabled(self) -> None:
+        settings = SimpleNamespace(
+            dashboard_host="127.0.0.1",
+            dashboard_port=8765,
+            dashboard_poll_ms=400,
+            dashboard_expose_transcripts=True,
+        )
+        store = DashboardStateStore()
+        store.patch(
+            "voice",
+            {
+                "status": "ready",
+                "last_asr_text": "你好",
+                "last_reply_text": "我在",
+            },
+        )
+        app = create_app(
+            settings=settings,
+            store=store,
+            bridge=FakeBridge(),
+            executor=FakeExecutor(),
+            enable_background=False,
+        )
+        client = TestClient(app)
+
+        payload = client.get("/api/state").json()
+
+        self.assertEqual(payload["voice"]["last_asr_text"], "你好")
+        self.assertEqual(payload["voice"]["last_reply_text"], "我在")
 
 
 if __name__ == "__main__":

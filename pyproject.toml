@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "lelamp-runtime"
 version = "0.1.0"
@@ -33,6 +37,16 @@ hardware = [
     "adafruit-circuitpython-neopixel",
     "rpi-ws281x",
 ]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["lelamp*"]
+
+[tool.setuptools.package-data]
+lelamp = ["recordings/*.csv"]
+"lelamp.dashboard" = ["web/*.html", "web/*.css", "web/*.js"]
 
 [tool.pytest.ini_options]
 filterwarnings = [

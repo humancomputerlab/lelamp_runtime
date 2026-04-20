@@ -277,6 +277,38 @@ class MotorBusServerBindRetryTests(unittest.TestCase):
             self.assertFalse(bus.is_ready())
             write_sentinel.assert_not_called()
 
+    def test_start_stops_server_if_ready_timeout_expires_after_thread_boot(self) -> None:
+        from lelamp.motor_bus import server as server_module
+
+        bus = server_module.MotorBusServer(
+            animation_service=FakeAnimationService(),
+            get_animation_service_error=lambda: None,
+            rgb_service=None,
+            led_count=40,
+        )
+
+        with mock.patch.object(server_module, "_port_is_free", return_value=True), \
+             mock.patch.object(server_module.time, "sleep"), \
+             mock.patch.object(server_module, "write_sentinel") as write_sentinel, \
+             mock.patch("uvicorn.Config"), \
+             mock.patch("uvicorn.Server") as FakeServer, \
+             mock.patch.object(server_module.threading, "Thread") as FakeThread:
+            fake_server = mock.Mock()
+            fake_server.started = False
+            fake_server.should_exit = False
+            FakeServer.return_value = fake_server
+
+            fake_thread = mock.Mock()
+            fake_thread.is_alive.return_value = True
+            FakeThread.return_value = fake_thread
+
+            bus.start(ready_timeout=0.0, bind_retry_total_s=0.1, bind_retry_interval_s=0.01)
+
+            self.assertFalse(bus.is_ready())
+            self.assertTrue(fake_server.should_exit)
+            fake_thread.join.assert_called()
+            write_sentinel.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

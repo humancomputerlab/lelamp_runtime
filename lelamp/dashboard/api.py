@@ -60,6 +60,17 @@ _ACTION_META = {
 }
 
 
+def _state_snapshot_for_api(snapshot: dict[str, object], *, expose_transcripts: bool) -> dict[str, object]:
+    payload = dict(snapshot)
+    voice = payload.get("voice")
+    if not expose_transcripts and isinstance(voice, dict):
+        voice_payload = dict(voice)
+        voice_payload["last_asr_text"] = None
+        voice_payload["last_reply_text"] = None
+        payload["voice"] = voice_payload
+    return payload
+
+
 def _receipt_response(receipt: Any) -> JSONResponse:
     status_code = 202
     if not receipt.ok and getattr(receipt, "error", None) == "busy":
@@ -187,7 +198,10 @@ def create_app(
 
     @app.get("/api/state")
     def get_state() -> dict[str, object]:
-        return store.snapshot()
+        return _state_snapshot_for_api(
+            store.snapshot(),
+            expose_transcripts=getattr(settings, "dashboard_expose_transcripts", False),
+        )
 
     @app.get("/api/actions")
     def get_actions() -> dict[str, object]:

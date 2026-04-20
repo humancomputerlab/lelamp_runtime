@@ -9,6 +9,8 @@ SERVICE_NAME="lelamp-post-bootstrap.service"
 MODE_SCRIPT="smooth_animation.py"
 RUN_DOWNLOAD_FILES_POSTBOOT="1"
 CHECK_OPENCLAW="0"
+UV_BIN=""
+EXIT_CODE=0
 
 if [[ -f "$BOOT_ENV_FILE" ]]; then
   # shellcheck disable=SC1090
@@ -16,8 +18,7 @@ if [[ -f "$BOOT_ENV_FILE" ]]; then
 fi
 
 PATH="$HOME/.local/bin:$HOME/.openclaw/bin:$PATH"
-
-UV_BIN="$(command -v uv || true)"
+UV_BIN="${UV_BIN:-$(command -v uv || true)}"
 
 run_section() {
   local title="$1"
@@ -33,6 +34,7 @@ run_section() {
       cat "$tmp_out"
       printf '\n```\n'
     else
+      EXIT_CODE=1
       printf 'Command exited non-zero.\n\n```\n'
       cat "$tmp_out"
       printf '\n```\n'
@@ -70,3 +72,4 @@ rm -f "$BOOT_ENV_FILE"
 systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
 
 echo "Post-boot finalize complete. Report written to ${REPORT_FILE}"
+exit "$EXIT_CODE"
