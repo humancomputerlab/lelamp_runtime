@@ -222,10 +222,11 @@ def current_sentinel(
       - ``"motor"``: server also reports motion as usable.
       - ``"rgb"``: server also reports RGB as usable.
 
-    When the probe fails for the requested domain, this returns ``None`` so
-    callers fall through to their direct-hardware fallback path. This keeps
-    the pre-arbiter self-recovery behaviour (the agent process failed to open
-    the serial port, so let another process try).
+    When there is no live sentinel, this returns ``None`` so callers can fall
+    through to their historical direct-hardware path. If a live sentinel
+    exists but the health probe is unreachable, ownership is uncertain and we
+    fail closed instead of letting another process contend for the same
+    hardware.
     """
     if require not in _VALID_REQUIRES:
         raise ValueError(f"unknown require={require!r}")
@@ -234,7 +235,10 @@ def current_sentinel(
         return None
     health = _probe_health(sentinel, timeout=probe_timeout)
     if health is None:
-        return None
+        raise MotorBusClientError(
+            "live motor bus sentinel exists but /health probe failed: "
+            f"{sentinel.base_url}"
+        )
     if not _health_satisfies(health, require):
         return None
     return sentinel

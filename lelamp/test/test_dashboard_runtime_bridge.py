@@ -283,6 +283,26 @@ class DashboardRuntimeBridgeTests(unittest.TestCase):
         self.assertIn("timed out", result.message.lower())
         self.assertEqual(result.detail, "wake_up")
 
+    def test_startup_hard_fails_when_motor_bus_ownership_is_uncertain(self) -> None:
+        settings = self._make_settings()
+        bridge = DashboardRuntimeBridge(
+            settings,
+            animation_factory=FakeAnimationService,
+            rgb_factory=FakeRGBService,
+            remote_module=SimpleNamespace(),
+        )
+
+        with patch.object(
+            runtime_bridge_mod,
+            "current_sentinel",
+            side_effect=runtime_bridge_mod.MotorBusClientError("live sentinel exists but /health probe failed"),
+        ):
+            result = bridge.startup()
+
+        self.assertFalse(result.ok)
+        self.assertIn("uncertain", result.message.lower())
+        self.assertIn("/health probe failed", result.detail)
+
     def test_startup_converts_remote_exception_to_failed_result(self) -> None:
         settings = self._make_settings()
 

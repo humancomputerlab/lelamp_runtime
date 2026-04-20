@@ -408,6 +408,96 @@ class RemoteControlConfigTests(unittest.TestCase):
                 error="Voice agent is running and already owns the serial port",
             )
 
+    def test_handle_play_returns_error_when_motor_bus_ownership_is_uncertain(self) -> None:
+        with patch.dict(sys.modules, _fake_runtime_modules(), clear=False):
+            sys.modules.pop("lelamp.remote_control", None)
+            from lelamp import remote_control
+
+        fake_settings = SimpleNamespace(
+            interpolation_duration=3.0,
+            idle_recording="home_safe",
+            home_recording="home_safe",
+            use_home_pose_relative=True,
+        )
+
+        with patch.object(
+            remote_control,
+            "_build_animation_service_with_proxy",
+            side_effect=remote_control.MotorBusClientError(
+                "live sentinel exists but /health probe failed"
+            ),
+        ), patch.object(remote_control, "load_runtime_settings", return_value=fake_settings), patch.object(
+            remote_control,
+            "record_standalone_playback",
+        ) as record_playback:
+            args = SimpleNamespace(
+                name="curious",
+                port="/dev/ttyACM0",
+                id="lelamp",
+                fps=30,
+                timeout=12.0,
+            )
+
+            result = remote_control._handle_play(args)
+
+        self.assertEqual(result, 2)
+        record_playback.assert_called_once_with(
+            source="remote_control",
+            initiator="remote_control",
+            action="play",
+            recording_name="curious",
+            rgb=None,
+            duration_ms=None,
+            ok=False,
+            error="live sentinel exists but /health probe failed",
+        )
+
+    def test_handle_startup_returns_error_when_motor_bus_ownership_is_uncertain(self) -> None:
+        with patch.dict(sys.modules, _fake_runtime_modules(include_follower=True), clear=False):
+            sys.modules.pop("lelamp.remote_control", None)
+            from lelamp import remote_control
+
+        args = SimpleNamespace(
+            recording="wake_up",
+            home_recording="home_safe",
+            port="/dev/ttyACM0",
+            id="lelamp",
+            enable_rgb=False,
+            settle_frames=0,
+            settle_hold_frames=0,
+            settle_fps=30,
+            wake_fps=30,
+            post_wake_hold=0.0,
+            led_count=40,
+            led_pin=12,
+            led_freq_hz=800000,
+            led_dma=10,
+            led_brightness=255,
+            led_invert=False,
+            led_channel=0,
+        )
+        with patch.object(
+            remote_control,
+            "current_sentinel",
+            side_effect=remote_control.MotorBusClientError(
+                "live sentinel exists but /health probe failed"
+            ),
+        ), patch.object(
+            remote_control,
+            "record_standalone_playback",
+        ) as record_playback:
+            self.assertEqual(remote_control._handle_startup(args), 2)
+            record_playback.assert_called_once_with(
+                source="remote_control",
+                initiator="remote_control",
+                action="startup",
+                recording_name="wake_up",
+                rgb=None,
+                duration_ms=None,
+                ok=False,
+                error="live sentinel exists but /health probe failed",
+            )
+
     def test_handle_shutdown_refuses_when_agent_motor_live(self) -> None:
         with patch.dict(sys.modules, _fake_runtime_modules(include_follower=True), clear=False):
             sys.modules.pop("lelamp.remote_control", None)

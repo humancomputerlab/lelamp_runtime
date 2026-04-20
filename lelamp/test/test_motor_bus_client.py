@@ -250,8 +250,10 @@ class FallbackRoutingTests(unittest.TestCase):
         self.assertEqual(result, "fallback")
         self.assertEqual(fallback_called["n"], 1)
 
-    def test_build_animation_service_uses_fallback_when_probe_fails(self) -> None:
-        # sentinel points at a closed port; probe should fail and fallback fires.
+    def test_build_animation_service_raises_when_live_sentinel_probe_fails(self) -> None:
+        # Sentinel points at a closed port. That means another process still
+        # advertises ownership, so we must fail closed instead of silently
+        # falling back to direct hardware access.
         free_port = _pick_free_port()
         sentinel_mod.write_sentinel(
             sentinel_mod.SentinelInfo(
@@ -267,9 +269,29 @@ class FallbackRoutingTests(unittest.TestCase):
             called["n"] += 1
             return "fallback"
 
-        result = client_mod.build_animation_service(_factory, probe_timeout=0.5)
-        self.assertEqual(result, "fallback")
-        self.assertEqual(called["n"], 1)
+        with self.assertRaises(client_mod.MotorBusClientError):
+            client_mod.build_animation_service(_factory, probe_timeout=0.5)
+        self.assertEqual(called["n"], 0)
+
+    def test_build_rgb_service_raises_when_live_sentinel_probe_fails(self) -> None:
+        free_port = _pick_free_port()
+        sentinel_mod.write_sentinel(
+            sentinel_mod.SentinelInfo(
+                pid=os.getpid(),
+                port=free_port,
+                base_url=f"http://127.0.0.1:{free_port}",
+                started_at_ms=1,
+            )
+        )
+        called = {"n": 0}
+
+        def _factory():
+            called["n"] += 1
+            return "fallback"
+
+        with self.assertRaises(client_mod.MotorBusClientError):
+            client_mod.build_rgb_service(_factory, probe_timeout=0.5)
+        self.assertEqual(called["n"], 0)
 
     def test_build_animation_service_returns_proxy_when_server_alive(self) -> None:
         animation = _FakeAnimation()

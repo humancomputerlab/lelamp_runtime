@@ -11,6 +11,7 @@ from .motion_profiles import (
     build_staged_shutdown_actions,
 )
 from .motor_bus.client import (
+    MotorBusClientError,
     REQUIRE_MOTOR,
     build_animation_service as _build_animation_service_with_proxy,
     build_rgb_service as _build_rgb_service_with_proxy,
@@ -48,6 +49,27 @@ def _recordings_dir() -> Path:
 
 def _elapsed_ms(started_at: float) -> int:
     return int((time.monotonic() - started_at) * 1000)
+
+
+def _fail_motor_bus_uncertain(
+    *,
+    action: str,
+    recording_name: str | None,
+    rgb,
+    error: str,
+) -> int:
+    print(error)
+    record_standalone_playback(
+        source="remote_control",
+        initiator="remote_control",
+        action=action,
+        recording_name=recording_name,
+        rgb=rgb,
+        duration_ms=None,
+        ok=False,
+        error=error,
+    )
+    return 2
 
 
 def _write_home_defaults(env_path: Path) -> None:
@@ -150,7 +172,15 @@ def _handle_list_recordings(args) -> int:
 
 
 def _handle_play(args) -> int:
-    service = _build_animation_service_with_proxy(lambda: _build_animation_service(args))
+    try:
+        service = _build_animation_service_with_proxy(lambda: _build_animation_service(args))
+    except MotorBusClientError as exc:
+        return _fail_motor_bus_uncertain(
+            action="play",
+            recording_name=args.name,
+            rgb=None,
+            error=str(exc),
+        )
     recordings = set(service.get_available_recordings())
     started_at = time.monotonic()
 
@@ -216,7 +246,15 @@ def _handle_solid(args) -> int:
         )
         return 1
 
-    service = _build_rgb_service_with_proxy(lambda: _build_rgb_service(args))
+    try:
+        service = _build_rgb_service_with_proxy(lambda: _build_rgb_service(args))
+    except MotorBusClientError as exc:
+        return _fail_motor_bus_uncertain(
+            action="light_solid",
+            recording_name=None,
+            rgb=(args.red, args.green, args.blue),
+            error=str(exc),
+        )
     service.handle_event("solid", (args.red, args.green, args.blue))
     record_standalone_playback(
         source="remote_control",
@@ -247,7 +285,15 @@ def _handle_clear(args) -> int:
         )
         return 1
 
-    service = _build_rgb_service_with_proxy(lambda: _build_rgb_service(args))
+    try:
+        service = _build_rgb_service_with_proxy(lambda: _build_rgb_service(args))
+    except MotorBusClientError as exc:
+        return _fail_motor_bus_uncertain(
+            action="light_clear",
+            recording_name=None,
+            rgb=None,
+            error=str(exc),
+        )
     service.clear()
     record_standalone_playback(
         source="remote_control",
@@ -327,7 +373,16 @@ def _handle_startup(args) -> int:
     # serial port (motor_ok == True). If the agent is alive but its
     # AnimationService never came up, we let the caller try a direct
     # recovery — matching the motor-domain fallback used by build_animation_service.
-    if current_sentinel(require=REQUIRE_MOTOR) is not None:
+    try:
+        motor_sentinel = current_sentinel(require=REQUIRE_MOTOR)
+    except MotorBusClientError as exc:
+        return _fail_motor_bus_uncertain(
+            action="startup",
+            recording_name=startup_recording,
+            rgb=None,
+            error=str(exc),
+        )
+    if motor_sentinel is not None:
         print(
             "Voice agent is running and already owns the serial port; "
             "staged startup via remote_control is not available. "
@@ -424,7 +479,16 @@ def _handle_shutdown(args) -> int:
     # Same motor-domain rule as _handle_startup: only refuse when the agent's
     # motor path is actually live. motor_ok=False means the agent never
     # acquired the bus, so direct torque-release can still run.
-    if current_sentinel(require=REQUIRE_MOTOR) is not None:
+    try:
+        motor_sentinel = current_sentinel(require=REQUIRE_MOTOR)
+    except MotorBusClientError as exc:
+        return _fail_motor_bus_uncertain(
+            action="shutdown_pose",
+            recording_name=args.recording,
+            rgb=None,
+            error=str(exc),
+        )
+    if motor_sentinel is not None:
         print(
             "Voice agent is running and already owns the serial port; "
             "staged shutdown with torque release is not available via "

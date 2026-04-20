@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 from lelamp.memory.runtime import record_standalone_playback
 from lelamp.motor_bus.client import (
+    MotorBusClientError,
     REQUIRE_MOTOR,
     build_animation_service as _build_animation_service_with_proxy,
     build_rgb_service as _build_rgb_service_with_proxy,
@@ -79,7 +80,21 @@ class DashboardRuntimeBridge:
         # port. If the agent's motor service never came up (``motor_ok =
         # False``) we intentionally drop through to the direct-hardware path
         # so the fallback code can still try to recover.
-        if current_sentinel(require=REQUIRE_MOTOR) is not None:
+        try:
+            motor_sentinel = current_sentinel(require=REQUIRE_MOTOR)
+        except MotorBusClientError as exc:
+            result = DashboardActionResult(False, "Motor bus ownership uncertain", detail=str(exc))
+            self._record_playback(
+                action="startup",
+                recording_name=self.settings.startup_recording,
+                rgb=None,
+                duration_ms=_elapsed_ms(started_at),
+                ok=False,
+                error=result.detail,
+            )
+            return result
+
+        if motor_sentinel is not None:
             # Block the dashboard busy lock until startup choreography is
             # actually done, just like play(). Without the wait, executor
             # would mark the action complete on dispatch-return, letting the
@@ -226,7 +241,12 @@ class DashboardRuntimeBridge:
         # torque-off requires stopping the agent first (see known
         # limitations). When motor_ok is False we fall through to the staged
         # shutdown; the port is unlikely to be held in that case.
-        if current_sentinel(require=REQUIRE_MOTOR) is not None:
+        try:
+            motor_sentinel = current_sentinel(require=REQUIRE_MOTOR)
+        except MotorBusClientError as exc:
+            return DashboardActionResult(False, "Motor bus ownership uncertain", detail=str(exc))
+
+        if motor_sentinel is not None:
             return self.play("power_off", playback_action="shutdown_pose")
         return self._run_remote(
             self.remote_module._handle_shutdown,
