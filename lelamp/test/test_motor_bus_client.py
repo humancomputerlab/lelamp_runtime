@@ -142,6 +142,23 @@ class ProxyAnimationServiceTests(unittest.TestCase):
             proxy.dispatch("startup", "wake_up")
             self.assertEqual(animation.dispatched, [("startup", "wake_up")])
 
+    def test_dispatch_frames_hits_server(self) -> None:
+        animation = _FakeAnimation()
+        app = build_app(
+            animation_service=animation,
+            get_animation_service_error=lambda: None,
+            rgb_service=None,
+            led_count=40,
+        )
+        frames = [
+            {"base_yaw.pos": 0.1, "wrist_pitch.pos": -0.2},
+            {"base_yaw.pos": 0.3},
+        ]
+        with _LiveServer(app) as srv:
+            proxy = client_mod.ProxyAnimationService(srv.base_url)
+            proxy.dispatch("frames", frames)
+            self.assertEqual(animation.dispatched, [("frames", frames)])
+
     def test_get_available_recordings(self) -> None:
         animation = _FakeAnimation()
         app = build_app(

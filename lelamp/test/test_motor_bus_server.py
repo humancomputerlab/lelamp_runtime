@@ -121,6 +121,16 @@ class MotorBusServerTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(animation.dispatched, [("startup", "wake_up")])
 
+    def test_frames_dispatches_event(self) -> None:
+        client, animation, _ = _build_client()
+        frames = [
+            {"base_yaw.pos": 0.1, "wrist_pitch.pos": -0.2},
+            {"base_yaw.pos": 0.3},
+        ]
+        resp = client.post("/motor/frames", json={"frames": frames})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(animation.dispatched, [("frames", frames)])
+
     def test_rgb_solid_dispatches(self) -> None:
         rgb = FakeRGBService()
         client, _, _ = _build_client(rgb=rgb)
@@ -222,6 +232,14 @@ class MotorBusServerTests(unittest.TestCase):
         self.assertTrue(animation._playback_done.is_set())
         client, _, _ = _build_client(animation=animation)
         resp = client.post("/motor/startup", json={"recording_name": "wake_up"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(animation._playback_done.is_set())
+
+    def test_frames_pre_clears_playback_done_gate(self) -> None:
+        animation = FakeAnimationService()
+        self.assertTrue(animation._playback_done.is_set())
+        client, _, _ = _build_client(animation=animation)
+        resp = client.post("/motor/frames", json={"frames": [{"base_yaw.pos": 0.1}]})
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(animation._playback_done.is_set())
 

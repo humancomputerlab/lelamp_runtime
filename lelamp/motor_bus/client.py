@@ -104,6 +104,14 @@ class ProxyAnimationService:
     def dispatch(self, event_type: str, payload: Any) -> None:
         if event_type == "play":
             _post_json(self._base_url, "/motor/play", {"recording_name": payload}, timeout=self._timeout)
+        elif event_type == "frames":
+            frames = [dict(frame) for frame in payload]
+            _post_json(
+                self._base_url,
+                "/motor/frames",
+                {"frames": frames},
+                timeout=self._timeout,
+            )
         elif event_type == "startup":
             _post_json(
                 self._base_url,

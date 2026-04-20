@@ -34,6 +34,10 @@ class PlayRequest(BaseModel):
     recording_name: str
 
 
+class FramesRequest(BaseModel):
+    frames: list[dict[str, float]]
+
+
 class SolidRequest(BaseModel):
     red: int = Field(ge=0, le=255)
     green: int = Field(ge=0, le=255)
@@ -121,6 +125,18 @@ def build_app(
         except Exception as exc:
             raise HTTPException(500, f"dispatch failed: {exc}")
         return {"status": "dispatched", "recording": req.recording_name}
+
+    @app.post("/motor/frames")
+    def frames(req: FramesRequest) -> dict[str, Any]:
+        err = get_animation_service_error()
+        if err is not None:
+            raise HTTPException(503, f"motion unavailable: {err}")
+        try:
+            _arm_playback_gate()
+            animation_service.dispatch("frames", req.frames)
+        except Exception as exc:
+            raise HTTPException(500, f"dispatch failed: {exc}")
+        return {"status": "dispatched", "frame_count": len(req.frames)}
 
     @app.post("/motor/wait_complete")
     def wait_complete(req: WaitCompleteRequest) -> dict[str, Any]:
