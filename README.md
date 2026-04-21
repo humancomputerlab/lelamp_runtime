@@ -8,17 +8,28 @@
 - `../DEVELOPMENT_GUIDE_PI5.md`
 - `../site/index.html`
 
+## 文档导航
+
+- [docs/TECHNICAL_OVERVIEW_CN.md](./docs/TECHNICAL_OVERVIEW_CN.md)
+  讲系统边界、运行时链路、控制平面和关键不变量。
+- [docs/SECONDARY_DEVELOPMENT_GUIDE_CN.md](./docs/SECONDARY_DEVELOPMENT_GUIDE_CN.md)
+  讲怎么接入、怎么改、怎么加动作/灯光/API。
+- [docs/API_REFERENCE_CN.md](./docs/API_REFERENCE_CN.md)
+  面向查字典的模块/API 参考。
+- [docs/LAUNCH_REVIEW_2026-04-21.md](./docs/LAUNCH_REVIEW_2026-04-21.md)
+  当前已知上线风险与修复状态。
+
 ## 一句话入口
 
 在树莓派上执行：
 
 ```bash
-cd ~/lelamp_runtime
+cd ~/lelamp-dev/lelamp_runtime
 chmod +x scripts/pi5_all_in_one.sh
 ./scripts/pi5_all_in_one.sh
 ```
 
-这是当前推荐的唯一入口。
+如果你不是按顶层 bring-up 默认路径部署，而是单独 checkout 了 `lelamp_runtime`，把第一行替换成你自己的 runtime 仓库目录即可。
 
 ## 目录里现在最重要的东西
 
@@ -82,6 +93,7 @@ MODEL_NAME=qwen3.5-omni-flash-realtime
 MODEL_VOICE=Tina
 LELAMP_AGENT_LANGUAGE=zh-CN
 LELAMP_AGENT_OPENING_LINE=灯灯醒了。
+LELAMP_QWEN_USE_SERVER_VAD=false
 LIVEKIT_URL=
 LIVEKIT_API_KEY=
 LIVEKIT_API_SECRET=
@@ -91,6 +103,10 @@ LELAMP_AUDIO_USER=pi
 HF_LEROBOT_CALIBRATION=/home/pi/.cache/huggingface/lerobot/calibration
 LELAMP_LED_COUNT=40
 LELAMP_ENABLE_RGB=true
+LELAMP_DASHBOARD_HOST=127.0.0.1
+LELAMP_DASHBOARD_PORT=8765
+LELAMP_DASHBOARD_POLL_MS=400
+LELAMP_DASHBOARD_EXPOSE_TRANSCRIPTS=false
 ```
 
 说明：
@@ -101,7 +117,8 @@ LELAMP_ENABLE_RGB=true
 - `LELAMP_AGENT_LANGUAGE` 和 `LELAMP_AGENT_OPENING_LINE` 控制默认对话语言和开机第一句
 - `HF_LEROBOT_CALIBRATION` 建议显式指向你当前用户的 calibration 目录，这样即使 runtime 用 `root` 跑灯光服务，也不会丢掉 follower 校准
 - `LELAMP_ENABLE_RGB=false` 可以临时关闭 LED 路径，隔离音频、动作和语音问题
-- `qwen` 默认走服务端 `server_vad`，也就是直接说话就会断句，不需要再额外做唤醒词
+- `qwen` 当前默认不是服务端 `server_vad`；要开启时显式设置 `LELAMP_QWEN_USE_SERVER_VAD=true`
+- dashboard 默认只监听 `127.0.0.1`，并且默认隐藏 `voice.last_asr_text` / `last_reply_text`；如果你要局域网访问或展示转写，必须显式开启对应变量
 
 如果你想接树莓派本地模型，目前前提是：
 
@@ -185,15 +202,16 @@ uv run -m lelamp.dashboard.api
 默认监听：
 
 ```bash
-LELAMP_DASHBOARD_HOST=0.0.0.0
+LELAMP_DASHBOARD_HOST=127.0.0.1
 LELAMP_DASHBOARD_PORT=8765
 LELAMP_DASHBOARD_POLL_MS=400
+LELAMP_DASHBOARD_EXPOSE_TRANSCRIPTS=false
 ```
 
 打开方式：
 
 - 树莓派本机：`http://127.0.0.1:8765`
-- 同网设备：看面板 Diagnostics 里显示的 `reachable_urls`
+- 同网设备：先显式设置 `LELAMP_DASHBOARD_HOST=0.0.0.0`，再看面板 Diagnostics 里显示的 `reachable_urls`
 
 面板能力：
 

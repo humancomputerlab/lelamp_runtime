@@ -8,6 +8,13 @@
 
 本文基于当前仓库代码整理，不以旧设计稿或 README 为准。
 
+如果你是第一次读这个仓库，建议先看：
+
+- [TECHNICAL_OVERVIEW_CN.md](./TECHNICAL_OVERVIEW_CN.md)
+- [SECONDARY_DEVELOPMENT_GUIDE_CN.md](./SECONDARY_DEVELOPMENT_GUIDE_CN.md)
+
+本文更适合做“接口字典”和“模块索引”，不是第一份总览文档。
+
 ---
 
 ## 1. 仓库结构与真正入口
@@ -211,7 +218,7 @@
 默认监听：
 
 - `http://127.0.0.1:8765`
-- 或 `http://0.0.0.0:${LELAMP_DASHBOARD_PORT}`
+- 如果显式设置 `LELAMP_DASHBOARD_HOST=0.0.0.0`，则也可以从局域网访问
 
 #### 页面接口
 
@@ -937,16 +944,17 @@ lelamp/recordings/<name>.csv
    - 顶层 README 写的是 `qwen3.5-omni-plus-realtime`
    - 代码默认值和 runtime README 写的是 `qwen3.5-omni-flash-realtime`
 
-2. `lelamp_runtime/README.md` 说 qwen 默认走服务端 `server_vad`
-   - 但 `runtime_config.py` 里 `LELAMP_QWEN_USE_SERVER_VAD` 默认是 `False`
+2. 顶层 bring-up 默认路径和 runtime README 的使用入口仍然容易让人混淆
+   - 顶层默认部署路径是 `~/lelamp-dev/lelamp_runtime`
+   - 如果后续还要做文档治理，建议把“顶层 bring-up 路径”和“独立 runtime checkout 路径”彻底拆开写
 
 3. `docs/design/h1-memory-v0/README.md` 标记为 `DESIGN / NOT-IMPLEMENTED`
    - 但当前仓库里已经存在 `lelamp/memory/*` 的实现代码
    - 说明设计文档和当前主线实现状态已经脱节
 
-4. 顶层仓库强调的是 bring-up 和部署
-   - 但真正可复用的 API 面大多在 `lelamp_runtime/`
-   - 如果后续还要给二开同学看，建议在顶层 README 增加一段“运行时 API 入口说明”
+4. 顶层 submodule 元数据和当前实际 runtime 工作分支仍然没有完全对齐
+   - 顶层仓库记录的 `lelamp_runtime` 来源 / 分支策略，和当前实际开发中的 runtime 分支并不完全一致
+   - 如果后续要做发布治理，建议补一个 submodule pointer / branch policy 的 CI 校验
 
 ---
 
@@ -989,4 +997,3 @@ uv run -m lelamp.remote_control solid 255 160 32
 
 - “HTTP/CLI 示例大全”
 - 或 “按模块的 class / method / state schema 逐文件索引版”
-
