@@ -355,7 +355,8 @@ body::before {
 }
 
 .panel--actions,
-.panel--memory {
+.panel--memory,
+.panel--intervene {
   min-height: 100%;
 }
 
@@ -363,6 +364,22 @@ body::before {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+
+.intervene-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.intervene-status {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.intervene-status--running {
+  color: var(--warm);
 }
 
 .recording-picker {
@@ -575,7 +592,8 @@ body::before {
   .control-grid,
   .hero-status-grid,
   .snapshot-grid,
-  .details-grid {
+  .details-grid,
+  .intervene-grid {
     grid-template-columns: 1fr;
   }
 

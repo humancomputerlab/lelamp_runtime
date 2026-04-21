@@ -362,6 +362,19 @@ var DashboardApp = (function () {
     });
   }
 
+  function applyInterveneStatus(documentRef, intervene) {
+    var statusNode = byId(documentRef, "interveneStatus");
+    var stopNode = byId(documentRef, "interveneBreathStop");
+    var running = !!(intervene && intervene.breath_running);
+    if (statusNode) {
+      statusNode.textContent = running ? "呼吸运行中。" : "呼吸未启动。";
+      statusNode.className = running ? "intervene-status intervene-status--running" : "intervene-status";
+    }
+    if (stopNode) {
+      stopNode.disabled = !running;
+    }
+  }
+
   function populateRecordings(documentRef, recordings) {
     var select = byId(documentRef, "recordingSelect");
     var currentValue;
@@ -561,6 +574,7 @@ var DashboardApp = (function () {
         }
         applyActionAvailability(documentRef, payload);
         populateRecordings(documentRef, payload.recordings || []);
+        applyInterveneStatus(documentRef, payload.intervene);
         return payload;
       })
       .catch(function () {
@@ -634,6 +648,30 @@ var DashboardApp = (function () {
     });
     bind("lightClearButton", function () {
       postJson(fetchRef, "/api/lights/clear").then(function () {
+        return refresh(documentRef, fetchRef);
+      });
+    });
+
+    // Manual fallback row — DEMO_PLAN §1.2. Selector-based so we don't
+    // need separate bindings per style; any button with data-intervene
+    // POSTs /api/actions/intervene with that style.
+    var interveneButtons = documentRef.querySelectorAll("[data-intervene]");
+    if (interveneButtons && interveneButtons.length) {
+      Array.prototype.forEach.call(interveneButtons, function (btn) {
+        btn.addEventListener("click", function () {
+          var style = btn.getAttribute("data-intervene");
+          if (!style) {
+            return;
+          }
+          postJson(fetchRef, "/api/actions/intervene", { style: style }).then(function () {
+            return refresh(documentRef, fetchRef);
+          });
+        });
+      });
+    }
+
+    bind("interveneBreathStop", function () {
+      postJson(fetchRef, "/api/actions/intervene/stop").then(function () {
         return refresh(documentRef, fetchRef);
       });
     });

@@ -12,9 +12,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from lelamp.dashboard.actions import (
+    BreathSlot,
     DashboardActionExecutor,
+    build_intervene_action,
     build_light_actions,
     build_motion_actions,
+    style_metadata,
 )
 from lelamp.dashboard.runtime_bridge import DashboardRuntimeBridge
 from lelamp.dashboard.samplers import DashboardSamplerLoop
@@ -155,18 +158,47 @@ def _action_catalog(
     return catalog
 
 
+def _default_breath_rgb_factory():
+    """Build a ProxyRGBService for the manual fallback breath.
+
+    Same path ``fluxchi_listener._get_breath_rgb_service`` uses, kept in
+    sync with it: breath refuses to new its own RGBService (would fight
+    the voice agent for the serial port / LED strip), so we go through
+    motor_bus. If the agent isn't up, we raise — the /api/actions/intervene
+    route maps that to a 500 with a readable error.
+    """
+    from lelamp.motor_bus.client import (
+        REQUIRE_RGB,
+        build_rgb_service,
+        current_sentinel,
+    )
+
+    sentinel = current_sentinel(require=REQUIRE_RGB, probe_timeout=1.0)
+    if sentinel is None:
+        raise RuntimeError(
+            "breath requires motor_bus sentinel; start the agent/motor_bus server first"
+        )
+
+    def _no_fallback():
+        raise RuntimeError("breath refuses to bypass motor_bus; check agent is up")
+
+    return build_rgb_service(_no_fallback)
+
+
 def create_app(
     *,
     settings=None,
     store=None,
     bridge=None,
     executor=None,
+    breath_slot=None,
     enable_background: bool = True,
 ) -> FastAPI:
     settings = settings or load_runtime_settings()
     store = store or DashboardStateStore()
     bridge = bridge or DashboardRuntimeBridge(settings)
     executor = executor or DashboardActionExecutor(store)
+    breath_slot = breath_slot or BreathSlot(_default_breath_rgb_factory)
     sampler = (
         DashboardSamplerLoop(store, settings, bridge, executor)
         if enable_background
@@ -175,6 +207,7 @@ def create_app(
 
     motion_actions = build_motion_actions(executor, bridge)
     light_actions = build_light_actions(executor, bridge)
+    intervene_action = build_intervene_action(executor, bridge, breath_slot)
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
@@ -185,6 +218,9 @@ def create_app(
         finally:
             if sampler is not None:
                 sampler.stop()
+            # Stop any lingering breath on shutdown so the LED strip
+            # doesn't stay mid-fade when uvicorn tears down.
+            breath_slot.shutdown()
 
     app = FastAPI(title="LeLamp Dashboard", lifespan=_lifespan)
     app.mount("/static", StaticFiles(directory=WEB_DIR, check_dir=False), name="static")
@@ -229,6 +265,13 @@ def create_app(
                 busy=busy,
                 active_action=active_action,
             ),
+            # Manual fallback (DEMO_PLAN §1.2) — the dashboard UI renders
+            # these as an extra row. `breath_running` lets the UI show a
+            # "stop breath" affordance; the JS doesn't hardcode styles.
+            "intervene": {
+                "styles": style_metadata(),
+                "breath_running": breath_slot.is_running(),
+            },
         }
 
     @app.post("/api/actions/startup")
@@ -269,6 +312,36 @@ def create_app(
     @app.post("/api/lights/clear")
     def post_clear() -> JSONResponse:
         return _receipt_response(light_actions["clear"]())
+
+    @app.post("/api/actions/intervene")
+    def post_intervene(payload: dict[str, str]) -> JSONResponse:
+        """Manual fallback button — DEMO_PLAN §1.2.
+
+        Body: ``{"style": "shy" | "headshake" | "sad_nod"
+                          | "breath_moderate" | "breath_mild"}``
+
+        Motion styles return 202/409 like the rest of the executor-backed
+        routes. Breath styles return 202 on start and 500 if motor_bus is
+        unreachable.
+        """
+        style = payload.get("style")
+        if not style:
+            raise HTTPException(status_code=400, detail="Missing style.")
+        try:
+            receipt = intervene_action(style)
+        except KeyError:
+            raise HTTPException(status_code=400, detail=f"Unknown style: {style}")
+        return _receipt_response(receipt)
+
+    @app.post("/api/actions/intervene/stop")
+    def post_intervene_stop() -> JSONResponse:
+        """Stop any in-flight manual breath. Motion goes through executor
+        stop, not this route."""
+        stopped = breath_slot.stop()
+        return JSONResponse(
+            status_code=200,
+            content={"ok": True, "stopped": stopped},
+        )
 
     return app
 

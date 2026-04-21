@@ -111,6 +111,28 @@
         </div>
       </section>
 
+      <section class="panel panel--intervene">
+        <div class="panel-inner">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow eyebrow--panel">现场手动</p>
+              <h2>手动干预（fallback）</h2>
+            </div>
+            <p class="section-note">FluxChi 或摄像头掉线时，演示人按此触发对应风格，绕过自动通路。</p>
+          </div>
+
+          <div class="intervene-grid">
+            <button class="action-button" data-intervene="shy" type="button">害羞 shy</button>
+            <button class="action-button" data-intervene="headshake" type="button">摇头 headshake</button>
+            <button class="action-button" data-intervene="sad_nod" type="button">叹气点头 sad+nod</button>
+            <button class="action-button action-button--amber" data-intervene="breath_moderate" type="button">呼吸 moderate</button>
+            <button class="action-button action-button--amber" data-intervene="breath_mild" type="button">呼吸 mild</button>
+            <button id="interveneBreathStop" class="action-button action-button--warn" type="button">停呼吸</button>
+          </div>
+          <p id="interveneStatus" class="intervene-status">呼吸未启动。</p>
+        </div>
+      </section>
+
       <section class="panel panel--memory">
         <div class="panel-inner">
           <div class="panel-head">

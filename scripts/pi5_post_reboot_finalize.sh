@@ -12,13 +12,56 @@ CHECK_OPENCLAW="0"
 UV_BIN=""
 EXIT_CODE=0
 
+load_boot_env() {
+  local path="$1"
+  local line key value
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" == \#* ]] && continue
+    [[ "$line" == *=* ]] || {
+      echo "Invalid post-boot config line: ${line}" >&2
+      EXIT_CODE=1
+      return 1
+    }
+
+    key="${line%%=*}"
+    value="${line#*=}"
+
+    case "$key" in
+      MODE_SCRIPT|RUN_DOWNLOAD_FILES_POSTBOOT|CHECK_OPENCLAW|UV_BIN)
+        printf -v "$key" '%s' "$value"
+        ;;
+      *)
+        echo "Unexpected post-boot config key: ${key}" >&2
+        EXIT_CODE=1
+        return 1
+        ;;
+    esac
+  done <"$path"
+}
+
 if [[ -f "$BOOT_ENV_FILE" ]]; then
-  # shellcheck disable=SC1090
-  . "$BOOT_ENV_FILE"
+  load_boot_env "$BOOT_ENV_FILE" || true
 fi
+
+case "$MODE_SCRIPT" in
+  smooth_animation.py|main.py)
+    ;;
+  *)
+    echo "Unsupported MODE_SCRIPT in post-boot config: ${MODE_SCRIPT}" >&2
+    EXIT_CODE=1
+    MODE_SCRIPT="smooth_animation.py"
+    ;;
+esac
 
 PATH="$HOME/.local/bin:$HOME/.openclaw/bin:$PATH"
 UV_BIN="${UV_BIN:-$(command -v uv || true)}"
+if [[ -n "$UV_BIN" && ( "$UV_BIN" != /* || ! -x "$UV_BIN" ) ]]; then
+  echo "Ignoring unsafe UV_BIN in post-boot config: ${UV_BIN}" >&2
+  EXIT_CODE=1
+  UV_BIN="$(command -v uv || true)"
+fi
 
 run_section() {
   local title="$1"

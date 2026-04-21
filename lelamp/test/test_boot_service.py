@@ -45,6 +45,20 @@ class BootServiceTests(unittest.TestCase):
         self.assertIn("UV_BIN=", all_in_one)
         self.assertIn('UV_BIN="${UV_BIN:-$(command -v uv || true)}"', finalize)
 
+    def test_post_boot_service_hardens_env_file_and_finalize_does_not_source_it(self) -> None:
+        all_in_one = (ROOT / "scripts" / "pi5_all_in_one.sh").read_text(encoding="utf-8")
+        finalize = (ROOT / "scripts" / "pi5_post_reboot_finalize.sh").read_text(encoding="utf-8")
+
+        self.assertIn('chmod 600 "$POST_BOOT_ENV_FILE"', all_in_one)
+        self.assertNotIn('. "$BOOT_ENV_FILE"', finalize)
+        self.assertIn('load_boot_env()', finalize)
+
+    def test_post_boot_finalize_validates_mode_script_before_execution(self) -> None:
+        finalize = (ROOT / "scripts" / "pi5_post_reboot_finalize.sh").read_text(encoding="utf-8")
+
+        self.assertIn('case "$MODE_SCRIPT" in', finalize)
+        self.assertIn('smooth_animation.py|main.py', finalize)
+
 
 if __name__ == "__main__":
     unittest.main()
