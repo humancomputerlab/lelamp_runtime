@@ -40,14 +40,38 @@ KIND_CONVERSATION = "conversation"
 KIND_FUNCTION_TOOL = "function_tool"
 KIND_FALLBACK_EXPRESSION = "fallback_expression"
 KIND_PLAYBACK = "playback"
+# R4 relationship-memory pivot (2026-04): the listener side writes one
+# of these per harness session so the next voice_agent prompt can see
+# "灯陪你呼吸了几次、你打断了几次、最后 stamina 恢复到哪". Not counted
+# in summary.py's event_counts — it's a session roll-up, not a turn.
+KIND_SESSION_SUMMARY = "session_summary"
 KINDS = {
     KIND_CONVERSATION,
     KIND_FUNCTION_TOOL,
     KIND_FALLBACK_EXPRESSION,
     KIND_PLAYBACK,
+    KIND_SESSION_SUMMARY,
 }
 
-SOURCES = {"voice_agent", "dashboard", "remote_control", "auto_expression"}
+SOURCES = {
+    "voice_agent",
+    "dashboard",
+    "remote_control",
+    "auto_expression",
+    # Harness consumer on the Pi that maps FluxChi fatigue frames onto
+    # lamp actions. Added 2026-04 so session_summary rollups have a
+    # legitimate source string; everything else this process does still
+    # goes through dashboard/remote_control paths that own their own
+    # source values.
+    "fluxchi_listener",
+}
+
+SESSION_SUMMARY_REASONS = {
+    "ws_disconnect",  # harness websocket dropped (Mac / tunnel down)
+    "shutdown",       # SIGTERM / KeyboardInterrupt at listener top-level
+    "session_end",    # FluxChi backend pushed an explicit end-of-session frame
+    "manual",         # CLI / test invocation
+}
 
 CONVERSATION_STYLES = {"excited", "caring", "worried", "sad"}
 
@@ -313,6 +337,76 @@ class MemoryWriter:
         }
         return self._write(
             kind=KIND_PLAYBACK,
+            source=source,
+            session_id=session_id,
+            payload=payload,
+            ts_ms=ts_ms,
+            event_id=event_id,
+        )
+
+    def write_session_summary(
+        self,
+        *,
+        session_id: str,
+        source: str,
+        reason: str,
+        level_counts: Mapping[str, int],
+        breath_interrupts: int = 0,
+        breath_completed: int = 0,
+        manual_fallback_count: int = 0,
+        final_stamina: Optional[float] = None,
+        final_perclos: Optional[float] = None,
+        duration_sec: Optional[float] = None,
+        profile_name: Optional[str] = None,
+        ts_ms: Optional[int] = None,
+        event_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Persist a one-off session roll-up written by the FluxChi listener.
+
+        This is deliberately structural (not free-form narrative) so a
+        later summariser can compose the R4 "上次我陪你呼吸了 N 次" line
+        deterministically. Narrative generation stays out of the writer
+        — LIFECYCLE.md still pins ``summary.narrative`` to ``None`` in v0.
+        """
+
+        if reason not in SESSION_SUMMARY_REASONS:
+            raise MemoryWriteError(
+                f"invalid session_summary reason={reason!r}; "
+                f"must be one of {sorted(SESSION_SUMMARY_REASONS)}"
+            )
+        # Normalise level_counts — the listener hands us a possibly-sparse
+        # dict and we want the payload readable without .get() gymnastics.
+        safe_levels: dict[str, int] = {}
+        for name, count in (level_counts or {}).items():
+            if not isinstance(name, str):
+                raise MemoryWriteError(f"level_counts key must be str, got {type(name)}")
+            try:
+                safe_levels[name] = int(count)
+            except (TypeError, ValueError) as exc:
+                raise MemoryWriteError(f"level_counts[{name!r}] not int-coercible: {exc}")
+            if safe_levels[name] < 0:
+                raise MemoryWriteError(f"level_counts[{name!r}] must be >= 0")
+        for fname, value in (
+            ("breath_interrupts", breath_interrupts),
+            ("breath_completed", breath_completed),
+            ("manual_fallback_count", manual_fallback_count),
+        ):
+            if not isinstance(value, int) or value < 0:
+                raise MemoryWriteError(f"{fname} must be a non-negative int, got {value!r}")
+        payload: dict[str, Any] = {
+            "payload_version": 1,
+            "reason": reason,
+            "profile_name": profile_name,
+            "level_counts": safe_levels,
+            "breath_interrupts": int(breath_interrupts),
+            "breath_completed": int(breath_completed),
+            "manual_fallback_count": int(manual_fallback_count),
+            "final_stamina": None if final_stamina is None else float(final_stamina),
+            "final_perclos": None if final_perclos is None else float(final_perclos),
+            "duration_sec": None if duration_sec is None else float(duration_sec),
+        }
+        return self._write(
+            kind=KIND_SESSION_SUMMARY,
             source=source,
             session_id=session_id,
             payload=payload,

@@ -7,8 +7,11 @@ from lelamp.integrations.fluxchi_listener import DispatchDecision, FluxChiStateL
 class _ProfileStub:
     debounce_same_level_sec = 30.0
     level_upgrade_immediate = True
+    global_budget_max = None
+    global_budget_window_sec = 300.0
 
-    def decide(self, _frame):
+    def decide(self, _frame, *, post_intervention=False):
+        assert post_intervention is False
         return DispatchDecision(
             level="moderate",
             urgency_rank=2,

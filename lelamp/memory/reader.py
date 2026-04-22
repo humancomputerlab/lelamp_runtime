@@ -137,6 +137,11 @@ class _ReaderState:
     profile: dict[str, Any]
     summaries: list[dict[str, Any]]  # newest first, agent-only, length <= 3
     recent_events: list[dict[str, Any]] = field(default_factory=list)
+    # 最近一条 fluxchi_listener 源的 session_summary 事件（若存在），
+    # 用来渲染 P1.5 "LAMP COMPANION RECAP" section。fluxchi session
+    # 与 voice_agent session 的 id 空间独立，也不走 sessions/*.summary.json
+    # 管线，所以要单独扫 events.jsonl 拿。
+    fluxchi_summary: Optional[dict[str, Any]] = None
 
 
 def _load_profile(user_dir: Path) -> dict[str, Any]:
@@ -327,9 +332,58 @@ def _load_recent_events_via_index(
     )
 
 
+def _load_latest_fluxchi_summary(events_path: Path) -> Optional[dict[str, Any]]:
+    """Tail-scan ``events.jsonl`` for the newest FluxChi session summary.
+
+    Independent of the voice_agent summary pipeline: fluxchi sessions
+    never emit ``sessions/<id>.summary.json``, so we look at the raw
+    ``kind=session_summary`` events written by ``fluxchi_listener``.
+
+    Returns the most recent event by ``ts_ms`` (falling back to file
+    order when ts_ms is missing or equal), or ``None`` if no matching
+    event exists. Crash-tail tolerant like ``_scan_recent_events``.
+    """
+
+    if not events_path.exists():
+        return None
+    try:
+        with events_path.open("r", encoding="utf-8") as fh:
+            raw_lines = fh.readlines()
+    except OSError:
+        return None
+    best: Optional[dict[str, Any]] = None
+    best_ts: int = -1
+    for i, raw in enumerate(raw_lines):
+        stripped = raw.rstrip("\n")
+        if not stripped:
+            continue
+        try:
+            event = json.loads(stripped)
+        except json.JSONDecodeError:
+            # Crash-tail or mid-file corruption — reader must degrade.
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("kind") != "session_summary":
+            continue
+        if event.get("source") != "fluxchi_listener":
+            continue
+        session_id = event.get("session_id")
+        if not isinstance(session_id, str) or _ids.is_manual_session(session_id):
+            continue
+        ts = event.get("ts_ms")
+        ts_int = int(ts) if isinstance(ts, (int, float)) else 0
+        # Ties broken by "later in file wins" — events.jsonl is append-only.
+        if ts_int > best_ts or (ts_int == best_ts and best is not None):
+            best_ts = ts_int
+            best = event
+    return best
+
+
 def _collect_state(user_dir: Path) -> _ReaderState:
     profile = _load_profile(user_dir)
     events_path = user_dir / "events.jsonl"
+    fluxchi_summary = _load_latest_fluxchi_summary(events_path)
     idx = _index_is_fresh(recent_index_path_for(user_dir), events_path)
     if idx is not None:
         summaries = _load_summaries_via_index(user_dir, idx)
@@ -341,7 +395,16 @@ def _collect_state(user_dir: Path) -> _ReaderState:
         # Tier 3: still load recent_events so a profile_hint-only header
         # could, in principle, exist -- but PROMPT_INTEGRATION says
         # fallback returns the unavailable marker with nothing else.
-        return _ReaderState(tier="fallback", profile=profile, summaries=[], recent_events=[])
+        # Exception: if fluxchi has been logging independently (lamp
+        # running before voice_agent ever wakes up), surface that recap
+        # alone so R4 relationship memory still closes the loop.
+        return _ReaderState(
+            tier="fallback",
+            profile=profile,
+            summaries=[],
+            recent_events=[],
+            fluxchi_summary=fluxchi_summary,
+        )
     session_ids = _summary_session_ids(summaries)
     if idx is not None:
         events = _load_recent_events_via_index(
@@ -356,7 +419,13 @@ def _collect_state(user_dir: Path) -> _ReaderState:
             allowed_session_ids=session_ids,
             allowed_event_ids=None,
         )
-    return _ReaderState(tier=tier, profile=profile, summaries=summaries, recent_events=events)
+    return _ReaderState(
+        tier=tier,
+        profile=profile,
+        summaries=summaries,
+        recent_events=events,
+        fluxchi_summary=fluxchi_summary,
+    )
 
 
 def recent_index_path_for(user_dir: Path) -> Path:
@@ -423,6 +492,133 @@ def _section_session_summary_recent(state: _ReaderState) -> str:
         body = _synthesize_recap(latest)
     if not body:
         return header
+    return f"{header}\n{body}"
+
+
+_FLUXCHI_PROFILE_LABELS = {
+    "scene_a_traditional": "表情提醒",
+    "scene_b_breath": "呼吸共振",
+}
+
+_FLUXCHI_LEVEL_LABELS = {
+    "mild": "轻提醒",
+    "moderate": "中提醒",
+    "severe": "打断",
+    "recovered": "回应恢复",
+}
+
+
+def _section_lamp_companion_recap(state: _ReaderState) -> str:
+    """Render the lamp's last companion session in Chinese prose.
+
+    Reads the latest FluxChi session_summary event (written by the
+    fluxchi_listener on ws disconnect / shutdown / session_end). The
+    goal is to give the voice agent enough context to say things like
+    "昨天我们做了两次慢呼吸，今天先休息会？" — closing the R4
+    relationship-memory loop at the language layer without touching
+    ``summary.narrative`` (which LIFECYCLE.md still pins to None in v0).
+    """
+
+    event = state.fluxchi_summary
+    if not event:
+        return ""
+    payload = event.get("payload") or {}
+    if not isinstance(payload, Mapping):
+        return ""
+
+    ts_ms = int(event.get("ts_ms") or 0)
+    duration_s = payload.get("duration_sec")
+    try:
+        duration_int = int(duration_s) if duration_s is not None else 0
+    except (TypeError, ValueError):
+        duration_int = 0
+    header_date = _format_date(ts_ms) if ts_ms else "unknown"
+    header_duration = _format_duration(duration_int) if duration_int > 0 else ""
+    if header_duration:
+        header = f"LAMP COMPANION RECAP ({header_date}, {header_duration})"
+    else:
+        header = f"LAMP COMPANION RECAP ({header_date})"
+
+    profile_name = payload.get("profile_name")
+    profile_label = _FLUXCHI_PROFILE_LABELS.get(
+        profile_name if isinstance(profile_name, str) else "",
+        profile_name if isinstance(profile_name, str) else "",
+    )
+
+    level_counts = payload.get("level_counts")
+    if not isinstance(level_counts, Mapping):
+        level_counts = {}
+    # Deterministic order: severe → moderate → mild → recovered → others.
+    ordered_levels = ["severe", "moderate", "mild", "recovered"]
+    level_fragments: list[str] = []
+    total_interventions = 0
+    for lvl in ordered_levels:
+        raw = level_counts.get(lvl)
+        try:
+            count = int(raw) if raw is not None else 0
+        except (TypeError, ValueError):
+            count = 0
+        if count <= 0:
+            continue
+        label = _FLUXCHI_LEVEL_LABELS.get(lvl, lvl)
+        level_fragments.append(f"{label} {count} 次")
+        if lvl != "recovered":
+            total_interventions += count
+    # Catch any unknown levels defensively.
+    for name, raw in sorted((level_counts or {}).items()):
+        if name in ordered_levels:
+            continue
+        try:
+            count = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if count <= 0:
+            continue
+        level_fragments.append(f"{name} {count} 次")
+        total_interventions += count
+
+    def _safe_int(value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    breath_completed = _safe_int(payload.get("breath_completed"))
+    breath_interrupts = _safe_int(payload.get("breath_interrupts"))
+    manual_fallback = _safe_int(payload.get("manual_fallback_count"))
+    final_stamina = payload.get("final_stamina")
+
+    # "有信号"判定：profile_name 本身不算信号——一个什么都没发生的 session
+    # 哪怕标了 scene_a 也不值得占 prompt 预算。is_interesting() 理应在
+    # listener 端拦住这种，这里保底防御。
+    has_signal = (
+        total_interventions > 0
+        or breath_completed > 0
+        or breath_interrupts > 0
+        or manual_fallback > 0
+        or isinstance(final_stamina, (int, float))
+    )
+    if not has_signal:
+        return ""
+
+    body_parts: list[str] = []
+    if profile_label:
+        body_parts.append(f"模式：{profile_label}")
+    if level_fragments:
+        body_parts.append("；".join(level_fragments))
+    breath_frag: list[str] = []
+    if breath_completed > 0:
+        breath_frag.append(f"完整呼吸 {breath_completed} 次")
+    if breath_interrupts > 0:
+        breath_frag.append(f"被打断 {breath_interrupts} 次")
+    if breath_frag:
+        body_parts.append("呼吸：" + "、".join(breath_frag))
+    if manual_fallback > 0:
+        body_parts.append(f"手动按钮 {manual_fallback} 次")
+    if isinstance(final_stamina, (int, float)):
+        body_parts.append(f"最终状态约 {int(final_stamina)}")
+
+    body = "；".join(body_parts) + "。"
     return f"{header}\n{body}"
 
 
@@ -662,11 +858,17 @@ def build_memory_header(
         return _FALLBACK_UNAVAILABLE
 
     if state.tier == "fallback":
+        # 边界：voice_agent 还没跑过 session，但灯已经独立陪用户过。
+        # 单独渲染 lamp recap，让 R4 记忆在"灯先于语音"的时序下也能闭环。
+        lamp_body = _section_lamp_companion_recap(state)
+        if lamp_body:
+            return _wrap(lamp_body, user_id=user_id, now=now)
         return _FALLBACK_UNAVAILABLE
 
     sections: list[tuple[str, bool]] = [
         (_section_profile_hint(state), False),
         (_section_session_summary_recent(state), True),
+        (_section_lamp_companion_recap(state), True),
         (_section_style_tendency(state), False),
         (_section_recent_conversation(state), False),
         (_section_function_tool_digest(state), False),

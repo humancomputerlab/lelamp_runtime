@@ -372,3 +372,113 @@ class TestIterEvents:
 
         rows = list(writer.iter_events())
         assert [row["payload"]["user_text"] for row in rows] == ["first", "second"]
+
+
+class TestSessionSummary:
+    """R4 relationship memory: listener-side session roll-up event."""
+
+    def test_happy_path_roundtrip(self, writer, user_dir):
+        sid = _agent_session()
+        record = writer.write_session_summary(
+            session_id=sid,
+            source="fluxchi_listener",
+            reason="ws_disconnect",
+            profile_name="scene_b",
+            level_counts={"mild": 2, "moderate": 1, "severe": 0},
+            breath_interrupts=1,
+            breath_completed=2,
+            manual_fallback_count=0,
+            final_stamina=62.5,
+            final_perclos=0.12,
+            duration_sec=812.4,
+        )
+        assert record["kind"] == "session_summary"
+        assert record["source"] == "fluxchi_listener"
+        assert record["payload"]["reason"] == "ws_disconnect"
+        assert record["payload"]["level_counts"] == {
+            "mild": 2, "moderate": 1, "severe": 0,
+        }
+        assert record["payload"]["breath_interrupts"] == 1
+        assert record["payload"]["breath_completed"] == 2
+        assert record["payload"]["final_stamina"] == pytest.approx(62.5)
+        assert record["payload"]["final_perclos"] == pytest.approx(0.12)
+        assert record["payload"]["duration_sec"] == pytest.approx(812.4)
+        # Persisted on disk.
+        events = _read_all(user_dir / "events.jsonl")
+        assert len(events) == 1
+        assert events[0]["payload"]["profile_name"] == "scene_b"
+
+    def test_rejects_unknown_reason(self, writer):
+        with pytest.raises(MemoryWriteError, match="session_summary reason"):
+            writer.write_session_summary(
+                session_id=_agent_session(),
+                source="fluxchi_listener",
+                reason="totally-made-up",
+                level_counts={},
+            )
+
+    def test_rejects_unknown_source(self, writer):
+        # Only the new "fluxchi_listener" + the legacy SOURCES are accepted.
+        with pytest.raises(MemoryWriteError, match="unknown source"):
+            writer.write_session_summary(
+                session_id=_agent_session(),
+                source="random_script",
+                reason="manual",
+                level_counts={},
+            )
+
+    def test_fluxchi_listener_is_a_valid_source(self):
+        # Regression guard: if someone removes the source the listener
+        # relies on, the tests should scream before the Pi does.
+        assert "fluxchi_listener" in memwriter.SOURCES
+
+    def test_rejects_negative_counts(self, writer):
+        with pytest.raises(MemoryWriteError, match="level_counts"):
+            writer.write_session_summary(
+                session_id=_agent_session(),
+                source="fluxchi_listener",
+                reason="shutdown",
+                level_counts={"mild": -1},
+            )
+        with pytest.raises(MemoryWriteError, match="breath_interrupts"):
+            writer.write_session_summary(
+                session_id=_agent_session(),
+                source="fluxchi_listener",
+                reason="shutdown",
+                level_counts={},
+                breath_interrupts=-5,
+            )
+
+    def test_empty_level_counts_allowed(self, writer):
+        # Boring session (connected, no interventions) still a valid
+        # record — the listener decides whether to skip based on
+        # SessionMetrics.is_interesting, not the writer.
+        record = writer.write_session_summary(
+            session_id=_agent_session(),
+            source="fluxchi_listener",
+            reason="ws_disconnect",
+            level_counts={},
+        )
+        assert record["payload"]["level_counts"] == {}
+        assert record["payload"]["breath_completed"] == 0
+
+    def test_session_summary_does_not_inflate_compute_summary_counts(self, writer):
+        # session_summary is NOT one of summary._EVENT_COUNT_KEYS — it's
+        # an out-of-band roll-up. This test locks that contract: if a
+        # future change adds it to event_counts, the voice_agent's
+        # fallback_rate calculation would silently break.
+        from lelamp.memory import summary as memsummary
+        assert "session_summary" not in memsummary._EVENT_COUNT_KEYS
+
+    def test_manual_session_still_acceptable(self, writer, user_dir):
+        # Manual sessions get filtered out of the reader's P1 window,
+        # but the writer itself has no reason to reject them. Keep the
+        # surface uniform so CLI tools / tests can drive it with either.
+        sid = _manual_session()
+        record = writer.write_session_summary(
+            session_id=sid,
+            source="fluxchi_listener",
+            reason="manual",
+            level_counts={"mild": 1},
+        )
+        assert record["session_id"] == sid

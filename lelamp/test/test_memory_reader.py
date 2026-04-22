@@ -378,6 +378,160 @@ class TestManualFiltering:
         assert prompts[3] in header
 
 
+class TestLampCompanionRecap:
+    """Covers the fluxchi_listener session_summary → P1.5 Chinese recap path.
+
+    Narrative synthesis route B (task #20): render lamp recap directly in
+    reader, without touching ``summary.narrative`` (still None in v0).
+    """
+
+    def _write_fluxchi_summary(
+        self,
+        writer,
+        *,
+        ts_ms: int,
+        reason: str = "ws_disconnect",
+        profile_name: str = "scene_a_traditional",
+        level_counts=None,
+        breath_completed: int = 0,
+        breath_interrupts: int = 0,
+        manual_fallback_count: int = 0,
+        final_stamina=None,
+        duration_sec: float = 300.0,
+    ):
+        from lelamp.memory.ids import generate_session_id
+        session_id = generate_session_id(
+            now=datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc),
+            manual=False,
+        )
+        return writer.write_session_summary(
+            session_id=session_id,
+            source="fluxchi_listener",
+            reason=reason,
+            profile_name=profile_name,
+            level_counts=level_counts or {},
+            breath_completed=breath_completed,
+            breath_interrupts=breath_interrupts,
+            manual_fallback_count=manual_fallback_count,
+            final_stamina=final_stamina,
+            duration_sec=duration_sec,
+            ts_ms=ts_ms,
+        )
+
+    def test_no_event_means_no_recap_section(self, writer, user_dir):
+        _populate_profile(user_dir)
+        handle = _seed_agent_session(writer)
+        _full_agent_fixture(writer, handle)
+        _close_session(writer, handle)
+        header = build_memory_header()
+        assert "LAMP COMPANION RECAP" not in header
+
+    def test_scene_a_renders_level_counts(self, writer, user_dir):
+        _populate_profile(user_dir)
+        handle = _seed_agent_session(writer)
+        _full_agent_fixture(writer, handle)
+        _close_session(writer, handle)
+        self._write_fluxchi_summary(
+            writer,
+            ts_ms=1_700_000_200_000,
+            profile_name="scene_a_traditional",
+            level_counts={"mild": 1, "moderate": 2, "severe": 0},
+            final_stamina=42.7,
+        )
+        header = build_memory_header()
+        assert "LAMP COMPANION RECAP" in header
+        assert "表情提醒" in header
+        assert "中提醒 2 次" in header
+        assert "轻提醒 1 次" in header
+        # severe=0 must not render
+        assert "打断 0 次" not in header
+        assert "最终状态约 42" in header
+
+    def test_scene_b_renders_breath_stats(self, writer, user_dir):
+        _populate_profile(user_dir)
+        handle = _seed_agent_session(writer)
+        _full_agent_fixture(writer, handle)
+        _close_session(writer, handle)
+        self._write_fluxchi_summary(
+            writer,
+            ts_ms=1_700_000_210_000,
+            profile_name="scene_b_breath",
+            level_counts={"moderate": 1},
+            breath_completed=2,
+            breath_interrupts=1,
+        )
+        header = build_memory_header()
+        assert "呼吸共振" in header
+        assert "完整呼吸 2 次" in header
+        assert "被打断 1 次" in header
+
+    def test_picks_latest_by_ts(self, writer, user_dir):
+        _populate_profile(user_dir)
+        handle = _seed_agent_session(writer)
+        _full_agent_fixture(writer, handle)
+        _close_session(writer, handle)
+        # Older event with severe=2
+        self._write_fluxchi_summary(
+            writer,
+            ts_ms=1_700_000_000_000,
+            profile_name="scene_a_traditional",
+            level_counts={"severe": 2},
+        )
+        # Newer event with mild only — this should win
+        self._write_fluxchi_summary(
+            writer,
+            ts_ms=1_700_000_300_000,
+            profile_name="scene_a_traditional",
+            level_counts={"mild": 1},
+        )
+        header = build_memory_header()
+        assert "轻提醒 1 次" in header
+        assert "打断 2 次" not in header  # older event must lose
+
+    def test_empty_session_skipped(self, writer, user_dir):
+        _populate_profile(user_dir)
+        handle = _seed_agent_session(writer)
+        _full_agent_fixture(writer, handle)
+        _close_session(writer, handle)
+        self._write_fluxchi_summary(
+            writer,
+            ts_ms=1_700_000_220_000,
+            profile_name="scene_a_traditional",
+            level_counts={},  # 空 session — listener 会 is_interesting() 拦掉，但保险
+            breath_completed=0,
+            breath_interrupts=0,
+            final_stamina=None,
+        )
+        header = build_memory_header()
+        # level_counts empty, no breath, no stamina → section 应被丢
+        assert "LAMP COMPANION RECAP" not in header
+
+    def test_renders_in_fallback_tier_when_only_fluxchi_exists(
+        self, writer, user_dir
+    ):
+        """灯先于语音陪过用户：voice_agent 无 summary 也要能渲染 lamp recap。"""
+        _populate_profile(user_dir)
+        # Intentionally NO agent session — no voice_agent summary at all.
+        self._write_fluxchi_summary(
+            writer,
+            ts_ms=1_700_000_400_000,
+            profile_name="scene_b_breath",
+            breath_completed=3,
+            duration_sec=900.0,
+        )
+        header = build_memory_header()
+        # Must NOT be the fallback marker — lamp recap alone is enough
+        assert header != _FALLBACK_UNAVAILABLE
+        assert "LAMP COMPANION RECAP" in header
+        assert "呼吸共振" in header
+        assert "完整呼吸 3 次" in header
+
+    def test_header_still_fallback_when_no_lamp_and_no_agent(self, user_dir):
+        _populate_profile(user_dir)
+        header = build_memory_header()
+        assert header == _FALLBACK_UNAVAILABLE
+
+
 class TestSynthesizedRecap:
     def test_recap_uses_stats_when_narrative_null(self, writer, user_dir):
         handle = _full_agent_fixture(writer, _seed_agent_session(writer))

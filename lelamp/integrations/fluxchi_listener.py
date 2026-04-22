@@ -36,6 +36,23 @@ from lelamp.breath_orchestrator import BreathOrchestrator, BreathPlan
 
 log = logging.getLogger("fluxchi_listener")
 
+# Memory is optional — listener must still run on a Pi where the
+# memory root has never been initialised. We import lazily so a broken
+# memory module never blocks the harness from connecting.
+try:
+    from lelamp.memory import ids as _memory_ids
+    from lelamp.memory.writer import MemoryWriter, MemoryWriteError
+    _MEMORY_AVAILABLE = True
+except Exception as _memory_exc:  # pragma: no cover - depends on deployment
+    _memory_ids = None  # type: ignore[assignment]
+    MemoryWriter = None  # type: ignore[assignment]
+    MemoryWriteError = Exception  # type: ignore[assignment]
+    _MEMORY_AVAILABLE = False
+    logging.getLogger("fluxchi_listener").warning(
+        "memory writer unavailable (%s); session_summary events will be skipped",
+        _memory_exc,
+    )
+
 # 下列两个依赖在运行时才 import，import 失败时给清晰报错
 try:
     import websockets
@@ -113,6 +130,13 @@ class ScenarioProfile:
     level_upgrade_immediate: bool = True
     voice_gate_enabled: bool = True
     voice_gate_block_recent_asr_sec: float = 5.0
+    # task #18 global cooldown — cap total interventions within a sliding
+    # window. None means "no global cap" (debounce-only behaviour).
+    # ``severe`` and ``recovered`` always bypass this budget: severe is
+    # a safety-critical microsleep signal, recovered is closing the loop
+    # for an already-counted intervention.
+    global_budget_max: Optional[int] = None
+    global_budget_window_sec: float = 300.0
     levels: List[LevelRule] = field(default_factory=list)
 
     @classmethod
@@ -166,22 +190,61 @@ class ScenarioProfile:
             ))
         # 按 urgency 降序，让 severe 比 mild 先匹配
         levels.sort(key=lambda lv: lv.urgency_rank, reverse=True)
+        global_budget_cfg = data.get("global_budget") or {}
+        if not isinstance(global_budget_cfg, dict):
+            global_budget_cfg = {}
+        raw_max = global_budget_cfg.get("max_dispatches")
+        budget_max: Optional[int]
+        if raw_max is None:
+            budget_max = None
+        else:
+            budget_max = int(raw_max)
+            if budget_max <= 0:
+                budget_max = None
+        budget_window = float(global_budget_cfg.get("window_sec", 300.0))
         return cls(
             name=data.get("name", path.stem),
             debounce_same_level_sec=float(debounce.get("same_level_sec", 30.0)),
             level_upgrade_immediate=bool(debounce.get("level_upgrade_immediate", True)),
             voice_gate_enabled=bool(voice_gate.get("block_when_speaking", True)),
             voice_gate_block_recent_asr_sec=float(voice_gate.get("block_recent_asr_sec", 5.0)),
+            global_budget_max=budget_max,
+            global_budget_window_sec=budget_window,
             levels=levels,
         )
 
-    def decide(self, frame: Dict[str, Any]) -> Optional["DispatchDecision"]:
+    def decide(
+        self,
+        frame: Dict[str, Any],
+        *,
+        post_intervention: bool = False,
+    ) -> Optional["DispatchDecision"]:
+        """Map a frame to a dispatch decision.
+
+        ``post_intervention`` is fed by the listener: it flips to True
+        the moment any real intervention (mild/moderate/severe motion or
+        breath) runs, and back to False the moment the recovered branch
+        fires. Without this gate, a slow stamina recovery would trigger
+        happy_wiggle on every frame the user hovers above stamina_min.
+        """
         subject = frame.get("subject") or {}
         events = frame.get("events") or []
         for rule in self.levels:
             if rule.trigger == "after_any_intervention":
-                # recovered 型由外部状态机决定是否触发（本 v0 先不启用 recovered）
-                continue
+                if not post_intervention:
+                    continue
+                if not rule.matches(subject, events):
+                    continue
+                return DispatchDecision(
+                    level=rule.name,
+                    urgency_rank=rule.urgency_rank,
+                    action_type=rule.action_type,
+                    recording=rule.recording,
+                    followup_recording=rule.followup_recording,
+                    rgb=rule.rgb,
+                    breath=rule.breath,
+                    is_recovered=True,
+                )
             if rule.matches(subject, events):
                 return DispatchDecision(
                     level=rule.name,
@@ -204,6 +267,67 @@ class DispatchDecision:
     followup_recording: Optional[str] = None
     rgb: Optional[Tuple[int, int, int]] = None
     breath: Optional[BreathPlan] = None
+    # ``recovered`` is the only rule whose job is to close out a prior
+    # intervention instead of starting a new one. Tag the decision so
+    # the listener can bypass the usual debounce / cooldown logic and
+    # clear its post_intervention flag atomically with dispatch.
+    is_recovered: bool = False
+
+
+# ─── Session metrics (R4 relationship memory) ────────────────
+
+
+@dataclass
+class SessionMetrics:
+    """每个 harness session 的 roll-up 原料。
+
+    字段命名对齐 ``MemoryWriter.write_session_summary`` 的入参，flush 时
+    直接 splat 过去。listener 是 v0 唯一 producer；voice_agent 不读也不
+    写这个结构，只在下一次启动读 ``<memory_root>/events.jsonl`` 里之前
+    的 ``session_summary`` 事件。
+    """
+
+    profile_name: Optional[str] = None
+    started_at: Optional[float] = None  # monotonic seconds
+    level_counts: Dict[str, int] = field(default_factory=dict)
+    breath_interrupts: int = 0
+    breath_completed: int = 0
+    manual_fallback_count: int = 0  # reserved: manual button lives on the dashboard
+    final_stamina: Optional[float] = None
+    final_perclos: Optional[float] = None
+    last_frame_ts: Optional[float] = None
+
+    def note_dispatch(self, level: str) -> None:
+        self.level_counts[level] = self.level_counts.get(level, 0) + 1
+
+    def note_subject(self, subject: Dict[str, Any]) -> None:
+        stamina = subject.get("stamina")
+        if isinstance(stamina, (int, float)):
+            self.final_stamina = float(stamina)
+        perclos = subject.get("perclos_ewma")
+        if isinstance(perclos, (int, float)):
+            self.final_perclos = float(perclos)
+
+    def note_breath_exit(self, *, completed: bool) -> None:
+        if completed:
+            self.breath_completed += 1
+        else:
+            self.breath_interrupts += 1
+
+    def is_interesting(self) -> bool:
+        """只在有真实动静时才值得落盘。避免一次空跑的 ws 连接也写 summary。"""
+        return (
+            bool(self.level_counts)
+            or self.breath_completed > 0
+            or self.breath_interrupts > 0
+            or self.manual_fallback_count > 0
+        )
+
+    def duration_sec(self, *, now: Optional[float] = None) -> Optional[float]:
+        if self.started_at is None:
+            return None
+        end = now if now is not None else time.monotonic()
+        return max(0.0, end - self.started_at)
 
 
 # ─── Voice gate ───────────────────────────────────────────────
@@ -310,6 +434,8 @@ class FluxChiStateListener:
         voice_gate: VoiceGate,
         stale_sec: float = DEFAULT_STALE_SEC,
         dry_run: bool = False,
+        memory_writer: Optional[Any] = None,
+        enable_memory: bool = True,
     ):
         if websockets is None:
             raise RuntimeError("websockets not installed — `uv pip install websockets`")
@@ -324,6 +450,31 @@ class FluxChiStateListener:
         # Breath (Scene B) 支持：一次只跑一段，被新决策覆盖即 stop 旧的
         self._current_breath: Optional[BreathOrchestrator] = None
         self._breath_rgb_service: Any = None  # lazy-built ProxyRGBService
+        # Relationship memory: listener owns one MemoryWriter per process
+        # and one (session_id, SessionMetrics) tuple per harness connection.
+        # Reset on every successful reconnect so stats don't bleed.
+        self._enable_memory = bool(enable_memory) and _MEMORY_AVAILABLE
+        self._memory_writer = memory_writer
+        if self._enable_memory and self._memory_writer is None and MemoryWriter is not None:
+            try:
+                self._memory_writer = MemoryWriter()
+            except Exception as exc:  # pragma: no cover - disk / permission issues
+                log.warning("memory writer init failed (%s); disabling session_summary", exc)
+                self._enable_memory = False
+        self._session_id: Optional[str] = None
+        self._metrics: Optional[SessionMetrics] = None
+        # Reverse-tunnel flap can generate >1 reconnect inside the same
+        # wall-clock second; session_id would then collide. Append a
+        # ``-N`` suffix per the LIFECYCLE.md scenario-C contract.
+        self._last_session_stem: Optional[str] = None
+        self._same_second_counter: int = 0
+        # Recovered closure state (task #17): flips True on any
+        # intervention dispatch, resets on recovered fire. Decide() gates
+        # after_any_intervention on this flag.
+        self._post_intervention: bool = False
+        # task #18 global cooldown: sliding-window ledger of dispatches
+        # (ts, level). ``_budget_blocked_levels`` is just for log sanity.
+        self._dispatch_history: List[Tuple[float, str]] = []
 
     def _get_breath_rgb_service(self) -> Any:
         """按需拿 motor_bus ProxyRGBService；没 sentinel 就抛。
@@ -359,10 +510,14 @@ class FluxChiStateListener:
 
     def _start_breath(self, decision: "DispatchDecision") -> None:
         assert decision.breath is not None
+        self._harvest_finished_breath()
         # 先停掉正在跑的那段（幂等）
         if self._current_breath is not None and self._current_breath.running:
             log.info("breath preempt: stopping previous %s", self._current_breath.plan.name)
             self._current_breath.stop()
+            # 预占 = 被新 breath 打断 ≠ 自然跑完；记入中断计数
+            self._note_breath_exit(self._current_breath, forced_interrupt=True)
+            self._current_breath = None
         service = self._get_breath_rgb_service()
         orchestrator = BreathOrchestrator(
             decision.breath,
@@ -373,6 +528,38 @@ class FluxChiStateListener:
         )
         orchestrator.start()
         self._current_breath = orchestrator
+
+    def _note_breath_exit(
+        self,
+        orchestrator: BreathOrchestrator,
+        *,
+        forced_interrupt: bool = False,
+    ) -> None:
+        """读一次刚停的 orchestrator.stats，把结果累计到 SessionMetrics。"""
+        if self._metrics is None:
+            return
+        stats = orchestrator.stats
+        if forced_interrupt:
+            completed = False
+        elif stats.interrupt_reason is not None:
+            completed = False
+        else:
+            completed = bool(stats.completed)
+        self._metrics.note_breath_exit(completed=completed)
+
+    def _harvest_finished_breath(self) -> None:
+        """Record a naturally-finished breath exactly once.
+
+        ``BreathOrchestrator`` flips ``running`` to False on natural
+        completion, but no callback fires into the listener. We poll for
+        that edge here before any next action / flush so session_summary
+        does not undercount completed breaths.
+        """
+        orchestrator = self._current_breath
+        if orchestrator is None or orchestrator.running:
+            return
+        self._note_breath_exit(orchestrator)
+        self._current_breath = None
 
     async def _play_when_idle(self, recording_name: str, *, retries: int = 2) -> None:
         for attempt in range(retries + 1):
@@ -387,19 +574,103 @@ class FluxChiStateListener:
                 log.debug("dashboard busy on play(%s), retrying attempt=%s", recording_name, attempt + 1)
                 await asyncio.sleep(0.1)
 
+    # ─── Session lifecycle (R4 relationship memory) ──────────
+
+    def _begin_session(self) -> None:
+        """Fresh session_id + metrics bucket on every ws connect.
+
+        We intentionally mint a *new* id per connection: reconnects after
+        a Mac/tunnel drop are almost always different "context" from the
+        user's perspective, and we'd rather emit two short summaries
+        than conflate a 2h nap + a 10min afternoon session.
+        """
+        self._metrics = SessionMetrics(
+            profile_name=self.profile.name,
+            started_at=time.monotonic(),
+        )
+        self._session_id = None
+        # New session = clean slate. Prior reconnect's intervention state
+        # should not leak into this user's session.
+        self._post_intervention = False
+        self._last_level_rank = 0
+        self._dispatch_history = []
+        if not self._enable_memory or _memory_ids is None:
+            return
+        try:
+            stem = _memory_ids.generate_session_id()
+        except Exception as exc:  # pragma: no cover
+            log.warning("session_id generation failed (%s); summary flush disabled", exc)
+            self._session_id = None
+            return
+        if stem == self._last_session_stem:
+            self._same_second_counter += 1
+            sid = f"{stem}-{self._same_second_counter}"
+        else:
+            self._same_second_counter = 0
+            sid = stem
+        self._last_session_stem = stem
+        self._session_id = sid
+
+    def _flush_session_summary(self, reason: str) -> None:
+        """Append one session_summary event if there's anything to say.
+
+        Idempotent: clears ``self._metrics`` after a successful write so a
+        second shutdown hook (e.g. SIGTERM + finally) doesn't double-write.
+        """
+        self._harvest_finished_breath()
+        metrics = self._metrics
+        self._metrics = None  # claim atomically — avoid double-flush races
+        if metrics is None or self._session_id is None:
+            return
+        if not metrics.is_interesting():
+            log.debug("session_summary skipped (no interventions): reason=%s", reason)
+            return
+        if not self._enable_memory or self._memory_writer is None:
+            return
+        try:
+            self._memory_writer.write_session_summary(
+                session_id=self._session_id,
+                source="fluxchi_listener",
+                reason=reason,
+                profile_name=metrics.profile_name,
+                level_counts=metrics.level_counts,
+                breath_interrupts=metrics.breath_interrupts,
+                breath_completed=metrics.breath_completed,
+                manual_fallback_count=metrics.manual_fallback_count,
+                final_stamina=metrics.final_stamina,
+                final_perclos=metrics.final_perclos,
+                duration_sec=metrics.duration_sec(),
+            )
+            log.info(
+                "session_summary written: reason=%s levels=%s breath(done/intr)=%d/%d",
+                reason,
+                metrics.level_counts,
+                metrics.breath_completed,
+                metrics.breath_interrupts,
+            )
+        except MemoryWriteError as exc:
+            log.warning("session_summary validation failed (%s); dropping", exc)
+        except Exception as exc:  # pragma: no cover - disk full / permission
+            log.warning("session_summary write failed (%s); dropping", exc)
+
     def shutdown(self) -> None:
         """shutdown hook：供 _main_async finally 调用，确保 breath 停掉。"""
+        self._harvest_finished_breath()
         if self._current_breath is not None and self._current_breath.running:
             log.info("listener shutdown: stopping breath")
             self._current_breath.stop()
+            self._note_breath_exit(self._current_breath)
+            self._current_breath = None
+        self._flush_session_summary("shutdown")
 
     async def run(self) -> None:
         backoff = 1.0
         while True:
+            self._begin_session()
             try:
                 log.info("connecting %s ...", self.ws_url)
                 async with websockets.connect(self.ws_url, ping_interval=20) as ws:
-                    log.info("connected")
+                    log.info("connected session_id=%s", self._session_id)
                     backoff = 1.0
                     async for message in ws:
                         try:
@@ -409,19 +680,43 @@ class FluxChiStateListener:
                             continue
                         await self._handle(frame)
             except asyncio.CancelledError:
+                # Caller is tearing us down — hand the flush to shutdown().
                 raise
             except Exception as e:
                 log.warning("ws session ended (%s); reconnect in %.1fs", e, backoff)
+                self._flush_session_summary("ws_disconnect")
                 try:
                     await asyncio.sleep(min(backoff, 30.0))
                 finally:
                     backoff = min(backoff * 2, 30.0)
+            else:
+                # Normal websocket close from the server side.
+                self._flush_session_summary("ws_disconnect")
 
     async def _handle(self, frame: Dict[str, Any]) -> None:
+        self._harvest_finished_breath()
         ts = frame.get("ts", 0.0)
         age = time.time() - ts
         if age > self.stale_sec:
             log.debug("drop stale frame age=%.1fs", age)
+            return
+
+        # Update the trailing stamina/perclos snapshot even when the
+        # frame gets gated or produces no dispatch — the summary wants
+        # the *last known* state, not the last-intervened state.
+        if self._metrics is not None:
+            subject = frame.get("subject") or {}
+            if isinstance(subject, dict):
+                self._metrics.note_subject(subject)
+            self._metrics.last_frame_ts = ts
+
+        # FluxChi backend may push a structured session-end frame on
+        # /api/v1/sessions/web/stop or harness disconnect. Treat it as a
+        # flush signal and keep going — the harness itself may carry
+        # more traffic afterwards for the next user session.
+        if isinstance(frame.get("event"), str) and frame["event"] == "session_end":
+            self._flush_session_summary("session_end")
+            self._begin_session()
             return
 
         blocked, reason = self.voice_gate.should_block()
@@ -429,7 +724,10 @@ class FluxChiStateListener:
             log.info("gated by voice (%s)", reason)
             return
 
-        decision = self.profile.decide(frame)
+        decision = self.profile.decide(
+            frame,
+            post_intervention=self._post_intervention,
+        )
         if decision is None:
             return
         if decision.action_type == ACTION_TYPE_MOTION and decision.recording is None:
@@ -439,11 +737,39 @@ class FluxChiStateListener:
             return
 
         # Debounce: 同 level 30s 内不重复；level 上跳立即覆盖
-        last_at = self._last_dispatch_ts.get(decision.level, 0.0)
-        if (time.time() - last_at) < self.profile.debounce_same_level_sec:
-            if not (self.profile.level_upgrade_immediate
-                    and decision.urgency_rank > self._last_level_rank):
-                log.debug("debounced level=%s", decision.level)
+        # recovered 是闭环信号，不过 debounce——它由 _post_intervention
+        # 单次门闸保护，已经天然只会在"干预后恢复"时 fire 一次。
+        if not decision.is_recovered:
+            last_at = self._last_dispatch_ts.get(decision.level, 0.0)
+            if (time.time() - last_at) < self.profile.debounce_same_level_sec:
+                if not (self.profile.level_upgrade_immediate
+                        and decision.urgency_rank > self._last_level_rank):
+                    log.debug("debounced level=%s", decision.level)
+                    return
+
+        # Global session budget (task #18). Enforced AFTER per-level
+        # debounce so a cheap frame doesn't waste a budget slot, and
+        # BEFORE dispatch so we never pay the HTTP/breath cost on a
+        # request that's about to be dropped. recovered + severe
+        # bypass the budget (see docstring on ScenarioProfile).
+        if (
+            self.profile.global_budget_max is not None
+            and not decision.is_recovered
+            and decision.urgency_rank < 3  # severe = rank 3
+        ):
+            now = time.time()
+            window = self.profile.global_budget_window_sec
+            self._dispatch_history = [
+                (ts, lvl) for ts, lvl in self._dispatch_history
+                if now - ts <= window
+            ]
+            if len(self._dispatch_history) >= self.profile.global_budget_max:
+                log.info(
+                    "budget-drop level=%s (%d dispatches in last %.0fs)",
+                    decision.level,
+                    len(self._dispatch_history),
+                    window,
+                )
                 return
 
         log.info(
@@ -475,6 +801,8 @@ class FluxChiStateListener:
                 log.info("motion preempt: stopping breath %s",
                          self._current_breath.plan.name)
                 self._current_breath.stop()
+                self._note_breath_exit(self._current_breath, forced_interrupt=True)
+                self._current_breath = None
             try:
                 await self.dashboard.wait_until_idle()
                 if decision.rgb is not None:
@@ -488,8 +816,20 @@ class FluxChiStateListener:
                 log.error("dashboard dispatch failed: %s", e)
                 return
 
-        self._last_dispatch_ts[decision.level] = time.time()
+        dispatch_at = time.time()
+        self._last_dispatch_ts[decision.level] = dispatch_at
         self._last_level_rank = decision.urgency_rank
+        if not decision.is_recovered:
+            self._dispatch_history.append((dispatch_at, decision.level))
+        if self._metrics is not None:
+            self._metrics.note_dispatch(decision.level)
+        # Recovered closure (task #17): reset the post-intervention flag
+        # so happy_wiggle only fires once per recovery cycle. Any fresh
+        # mild/moderate/severe dispatch flips it back on.
+        if decision.is_recovered:
+            self._post_intervention = False
+        else:
+            self._post_intervention = True
 
 
 # ─── CLI ──────────────────────────────────────────────────────
@@ -514,6 +854,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stale-sec", type=float, default=DEFAULT_STALE_SEC)
     p.add_argument("--dry-run", action="store_true",
                    help="Print decisions instead of POSTing to dashboard")
+    p.add_argument("--no-memory", action="store_true",
+                   help="Skip writing session_summary events to the memory store "
+                        "(handy for CLI experiments or when memory root is read-only)")
     p.add_argument("--log-level", default="INFO")
     return p
 
@@ -541,6 +884,7 @@ async def _main_async(args: argparse.Namespace) -> None:
         voice_gate=voice_gate,
         stale_sec=args.stale_sec,
         dry_run=args.dry_run,
+        enable_memory=not args.no_memory,
     )
     try:
         await listener.run()
