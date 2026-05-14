@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
 import statistics
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from livekit.agents.voice import chat_cli as livekit_chat_cli
@@ -749,6 +752,9 @@ def _install_console_audio_patch_impl() -> None:
                         )
                     continue
 
+                # Check for external threshold override from dashboard
+                _apply_dashboard_voice_cmd(self._lelamp_turn_detector)
+
                 self._loop.call_soon_threadsafe(self._audio_input_ch.send_nowait, frame_to_send)
 
             if self._lelamp_input_suppressed:
@@ -970,3 +976,30 @@ def _resample_int16(
 
 def _wall_time_ms() -> int:
     return int(time.time() * 1000)
+
+
+_DASHBOARD_CMD_PATH = Path("/tmp/lelamp-dashboard-cmd.json")
+
+
+def _apply_dashboard_voice_cmd(detector: LocalTurnDetector) -> None:
+    try:
+        cmd_path = _DASHBOARD_CMD_PATH
+        if not cmd_path.is_file():
+            return
+        data = json.loads(cmd_path.read_text(encoding="utf-8"))
+        new_threshold = data.get("speech_threshold_db")
+        if new_threshold is not None:
+            new_threshold = float(new_threshold)
+            new_threshold = max(new_threshold, -80.0)
+            new_threshold = min(new_threshold, 0.0)
+            detector.speech_threshold_db = new_threshold
+            logger.info(
+                "Applied dashboard voice threshold override",
+                extra={"speech_threshold_db": detector.speech_threshold_db},
+            )
+        try:
+            os.remove(cmd_path)
+        except OSError:
+            pass
+    except Exception:
+        pass

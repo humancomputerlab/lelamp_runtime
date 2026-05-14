@@ -165,6 +165,17 @@ class DashboardStateStore:
 
             return deepcopy(self._state)
 
+    def resolve_section_errors(self, source: str) -> dict[str, Any]:
+        """Mark all active errors for a given source as resolved."""
+        with self._lock:
+            now_ms = _now_ms()
+            for error in self._state["errors"]:
+                if error["source"] == source:
+                    error["active"] = False
+                    error["last_seen_ms"] = now_ms
+            self._state["system"]["last_update_ms"] = now_ms
+            return deepcopy(self._state)
+
     def _derive_system_status(self) -> str:
         system = self._state["system"]
         observed_status = system.get("status", "unknown")

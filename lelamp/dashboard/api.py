@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -185,6 +187,20 @@ def _default_breath_rgb_factory():
     return build_rgb_service(_no_fallback)
 
 
+def _write_voice_state(settings, updates: dict[str, object]) -> None:
+    cmd_path = Path("/tmp/lelamp-dashboard-cmd.json")
+    if cmd_path.is_file():
+        try:
+            data = json.loads(cmd_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    else:
+        data = {}
+    data.update(updates)
+    cmd_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
 def create_app(
     *,
     settings=None,
@@ -345,6 +361,48 @@ def create_app(
             status_code=200,
             content={"ok": True, "stopped": stopped},
         )
+
+    # ── audio / voice controls ──
+
+    @app.post("/api/audio/volume")
+    def post_audio_volume(payload: dict[str, int]) -> JSONResponse:
+        percent = payload.get("percent")
+        if percent is None or not isinstance(percent, int) or percent < 0 or percent > 100:
+            raise HTTPException(status_code=400, detail="percent must be 0–100")
+        try:
+            subprocess.run(
+                ["amixer", "sset", "Line", f"{percent}%"],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        return JSONResponse(status_code=200, content={"ok": True, "volume_percent": percent})
+
+    @app.post("/api/voice/threshold")
+    def post_voice_threshold(payload: dict[str, object]) -> JSONResponse:
+        updates: dict[str, object] = {}
+        raw_db = payload.get("speech_threshold_db")
+        if raw_db is not None:
+            updates["speech_threshold_db"] = float(raw_db)
+        raw_noise = payload.get("noise_floor_db")
+        if raw_noise is not None:
+            updates["noise_floor_db"] = float(raw_noise)
+        if updates:
+            _write_voice_state(settings, updates)
+        return JSONResponse(status_code=200, content={"ok": True})
+
+    @app.post("/api/voice/calibrate")
+    def post_voice_calibrate(payload: dict[str, object] | None = None) -> JSONResponse:
+        enabled = True
+        if payload is not None:
+            enabled = bool(payload.get("enable", True))
+        _write_voice_state(settings, {
+            "calibration_enabled": enabled,
+            "calibration_progress": 0.0,
+        })
+        return JSONResponse(status_code=200, content={"ok": True, "calibration_enabled": enabled})
 
     return app
 

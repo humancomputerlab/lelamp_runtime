@@ -38,6 +38,9 @@ var DashboardApp = (function () {
     dashboardPort: 8765,
   };
 
+  var _volumeDragging = false;
+  var _thresholdDragging = false;
+
   function byId(documentRef, id) {
     return documentRef.getElementById(id);
   }
@@ -407,7 +410,7 @@ var DashboardApp = (function () {
       return "灯已在稳定姿态，可以继续互动或切换动作。";
     }
     if (motion.status === "running") {
-      return "灯正在执行动作，请等这一段表演完成。";
+      return "动作中";
     }
     if (motion.status === "homing") {
       return "灯正在慢慢回到安全姿态。";
@@ -496,7 +499,6 @@ var DashboardApp = (function () {
     text(byId(documentRef, "uptimeSeconds"), formatSeconds(system.uptime_s));
 
     text(byId(documentRef, "motionStatus"), translateMotionStatus(motion.status || "unknown"));
-    text(byId(documentRef, "motionResult"), heroCaption(motion));
     text(byId(documentRef, "currentRecording"), motion.current_recording || "--");
     text(byId(documentRef, "lastCompletedRecording"), motion.last_completed_recording || "--");
     text(byId(documentRef, "homeRecording"), motion.home_recording || "--");
@@ -512,15 +514,27 @@ var DashboardApp = (function () {
     text(byId(documentRef, "voiceStatus"), translateStatus(voice.status || "unknown"));
     text(byId(documentRef, "voiceState"), translateVoiceState(voice.local_state || "unknown"));
 
+    // Sync audio / voice controls from state
+    var volumeSlider2 = byId(documentRef, "volumeSlider");
+    var volumeDisplay2 = byId(documentRef, "volumeDisplay");
+    if (!_volumeDragging && volumeSlider2 && audio.volume_percent != null) {
+      volumeSlider2.value = audio.volume_percent;
+      if (volumeDisplay2) {
+        volumeDisplay2.textContent = audio.volume_percent + "%";
+      }
+    }
+    var thresholdSlider2 = byId(documentRef, "thresholdSlider");
+    var thresholdDisplay2 = byId(documentRef, "thresholdDisplay");
+    if (!_thresholdDragging && thresholdSlider2 && voice.speech_threshold_db != null) {
+      thresholdSlider2.value = voice.speech_threshold_db;
+      if (thresholdDisplay2) {
+        thresholdDisplay2.textContent = Number(voice.speech_threshold_db).toFixed(1) + " dB";
+      }
+    }
+
     setClassName(byId(documentRef, "connectionStatus"), "status-pill status-pill--" + statusTone(connection));
     setClassName(byId(documentRef, "systemStatus"), "status-pill status-pill--" + statusTone(system.status || "unknown"));
 
-    // Recordings dropdown is managed by loadActions(); renderState only
-    // updates the read-only recording list tokens in the details panel.
-    renderTokens(byId(documentRef, "reachableUrls"), reachable, "还没有可访问地址。");
-    renderTokens(byId(documentRef, "recordingList"), motion.available_recordings || [], "还没有发现动作录制。");
-    renderHardwareNotes(documentRef, motion, light, audio, voice);
-    renderConnectivityHints(documentRef, reachable);
     renderConfigSnippets(documentRef, motion);
     renderVoiceDiagnostics(documentRef, voice);
     renderErrors(byId(documentRef, "errorFeed"), state.errors || []);
@@ -655,6 +669,57 @@ var DashboardApp = (function () {
         return refresh(documentRef, fetchRef);
       });
     });
+
+    // ── audio / voice controls ──
+
+    var volumeSlider = byId(documentRef, "volumeSlider");
+    var volumeDisplay = byId(documentRef, "volumeDisplay");
+    if (volumeSlider && volumeDisplay) {
+      volumeSlider.addEventListener("input", function () {
+        _volumeDragging = true;
+        volumeDisplay.textContent = volumeSlider.value + "%";
+      });
+      volumeSlider.addEventListener("change", function () {
+        _volumeDragging = false;
+        postJson(fetchRef, "/api/audio/volume", { percent: Number(volumeSlider.value) });
+      });
+    }
+
+    var thresholdSlider = byId(documentRef, "thresholdSlider");
+    var thresholdDisplay = byId(documentRef, "thresholdDisplay");
+    if (thresholdSlider && thresholdDisplay) {
+      thresholdSlider.addEventListener("input", function () {
+        _thresholdDragging = true;
+        thresholdDisplay.textContent = Number(thresholdSlider.value).toFixed(1) + " dB";
+      });
+      thresholdSlider.addEventListener("change", function () {
+        _thresholdDragging = false;
+        postJson(fetchRef, "/api/voice/threshold", { speech_threshold_db: Number(thresholdSlider.value) });
+      });
+    }
+
+    bind("voiceCalibrateBtn", function () {
+      postJson(fetchRef, "/api/voice/calibrate", { enable: true }).then(function () {
+        updateAudioModeLabel(documentRef, true);
+      });
+    });
+
+    var manualToggle = byId(documentRef, "voiceManualToggle");
+    if (manualToggle) {
+      manualToggle.addEventListener("change", function () {
+        var manual = manualToggle.checked;
+        postJson(fetchRef, "/api/voice/calibrate", { enable: !manual });
+        updateAudioModeLabel(documentRef, !manual);
+      });
+    }
+
+    function updateAudioModeLabel(documentRef, auto) {
+      var label = byId(documentRef, "audioModeLabel");
+      if (label) {
+        label.textContent = auto ? "自动" : "手动";
+        label.style.color = auto ? "var(--ready)" : "var(--warn)";
+      }
+    }
   }
 
   function start(documentRef, windowRef, fetchRef, pollMs) {

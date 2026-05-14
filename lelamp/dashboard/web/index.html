@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#08111a">
   <title>LeLamp 本地展台</title>
-  <link rel="stylesheet" href="/static/dashboard.css?v=4">
+  <link rel="stylesheet" href="/static/dashboard.css?v=13">
 </head>
 <body>
   <div class="app-shell">
@@ -40,7 +40,6 @@
           <div class="panel-head panel-head--hero">
             <div>
               <p class="eyebrow eyebrow--panel">当前状态</p>
-              <h2>灯现在在做什么</h2>
             </div>
           </div>
 
@@ -48,7 +47,6 @@
             <div class="hero-copy">
               <div class="hero-label">现在</div>
               <div id="motionStatus" class="hero-state">未连接</div>
-              <p id="motionResult" class="hero-caption">正在等待运行时状态。</p>
             </div>
 
             <div class="hero-status-grid">
@@ -118,6 +116,46 @@
               <button class="action-button recording-button" data-recording="wake_up" type="button">wake_up</button>
             </div>
           </div>
+
+          <section class="audio-panel">
+            <div class="audio-panel__head">
+              <span class="audio-panel__eyebrow">声音</span>
+              <span id="audioModeLabel" class="audio-panel__mode">自动</span>
+            </div>
+
+            <div class="audio-panel__body">
+              <div class="audio-card audio-card--volume">
+                <div class="audio-card__header">
+                  <span class="audio-card__label">音量</span>
+                  <span id="volumeDisplay" class="audio-card__value">100%</span>
+                </div>
+                <input id="volumeSlider" type="range" min="0" max="100" value="100" class="audio-slider">
+              </div>
+
+              <div class="audio-card audio-card--threshold">
+                <div class="audio-card__header">
+                  <span class="audio-card__label">语音阈值</span>
+                  <span id="thresholdDisplay" class="audio-card__value">-42 dB</span>
+                </div>
+                <input id="thresholdSlider" type="range" min="-80" max="0" value="-42" step="0.5" class="audio-slider">
+                <div class="audio-card__range">
+                  <span>-80 dB</span>
+                  <span>0 dB</span>
+                </div>
+              </div>
+
+              <div class="audio-card audio-card--actions">
+                <button id="voiceCalibrateBtn" class="audio-btn audio-btn--primary" type="button">重新自适应</button>
+                <label class="audio-toggle">
+                  <input id="voiceManualToggle" type="checkbox">
+                  <span class="audio-toggle__track">
+                    <span class="audio-toggle__thumb"></span>
+                  </span>
+                  <span class="audio-toggle__label">手动模式</span>
+                </label>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -149,7 +187,7 @@
               <p class="eyebrow eyebrow--panel">姿态记忆</p>
               <h2>动作与回位基准</h2>
             </div>
-            <p class="section-note">保留原始录制名，方便你后续维护与追加动作。</p>
+            <p class="section-note"></p>
           </div>
 
           <div class="snapshot-grid">
@@ -180,30 +218,9 @@
               <p class="eyebrow eyebrow--panel">第三层</p>
               <h2>现场信息</h2>
             </div>
-            <p class="section-note">给现场操作者和你自己看，不抢首屏，但信息完整保留。</p>
           </div>
 
           <div class="details-grid">
-            <section class="detail-block">
-              <h3>可访问地址</h3>
-              <div id="reachableUrls" class="token-list token-list--urls"></div>
-            </section>
-
-            <section class="detail-block">
-              <h3>动作库</h3>
-              <div id="recordingList" class="token-list"></div>
-            </section>
-
-            <section class="detail-block">
-              <h3>硬件提示</h3>
-              <div id="hardwareNotes" class="token-list"></div>
-            </section>
-
-            <section class="detail-block">
-              <h3>连接建议</h3>
-              <div id="connectivityHints" class="token-list"></div>
-            </section>
-
             <section class="detail-block">
               <h3>配置片段</h3>
               <div id="configSnippets" class="token-list"></div>
@@ -221,9 +238,10 @@
           </div>
         </div>
       </section>
+
     </main>
   </div>
 
-  <script src="/static/dashboard.js?v=4"></script>
+  <script src="/static/dashboard.js?v=13"></script>
 </body>
 </html>

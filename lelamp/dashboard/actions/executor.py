@@ -124,7 +124,7 @@ class DashboardActionExecutor:
             self._worker = None
 
             if error_payload is None:
-                self._store.resolve_error(f"action.{action_id}", section)
+                self._store.resolve_section_errors(section)
             else:
                 self._store.record_error(*error_payload)
 
