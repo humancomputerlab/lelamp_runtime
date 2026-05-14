@@ -70,7 +70,7 @@ class AmbientNoiseCalibrator:
     baseline_threshold_db: float
     calibration_duration_s: float = 1.6
     calibration_margin_db: float = 8.0
-    min_threshold_db: float = -60.0
+    min_threshold_db: float = -66.0
     max_threshold_db: float = -42.0
     enabled: bool = True
     _started_at: float | None = None
@@ -101,8 +101,12 @@ class AmbientNoiseCalibrator:
         if now - self._started_at < self.calibration_duration_s:
             return None
 
-        noise_floor_db = statistics.median(self._samples) if self._samples else self.baseline_threshold_db
-        threshold_candidate = max(self.baseline_threshold_db, noise_floor_db + self.calibration_margin_db)
+        baseline_threshold_db = min(
+            max(self.baseline_threshold_db, self.min_threshold_db),
+            self.max_threshold_db,
+        )
+        noise_floor_db = statistics.median(self._samples) if self._samples else baseline_threshold_db
+        threshold_candidate = noise_floor_db + self.calibration_margin_db
         speech_threshold_db = min(max(threshold_candidate, self.min_threshold_db), self.max_threshold_db)
         self._completed = True
 

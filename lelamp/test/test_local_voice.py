@@ -106,6 +106,24 @@ class AmbientNoiseCalibratorTests(unittest.TestCase):
         self.assertAlmostEqual(result["noise_floor_db"], -54.0)
         self.assertAlmostEqual(result["speech_threshold_db"], -46.0)
 
+    def test_calibrator_can_lower_threshold_in_quiet_room(self) -> None:
+        calibrator = AmbientNoiseCalibrator(
+            baseline_threshold_db=-52.0,
+            calibration_duration_s=1.0,
+            calibration_margin_db=8.0,
+        )
+
+        self.assertIsNone(calibrator.observe(-78.0, 0.0))
+        self.assertIsNone(calibrator.observe(-77.0, 0.25))
+        self.assertIsNone(calibrator.observe(-76.0, 0.5))
+        self.assertIsNone(calibrator.observe(-75.0, 0.75))
+        result = calibrator.observe(-74.0, 1.0)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["status"], "ready")
+        self.assertAlmostEqual(result["noise_floor_db"], -76.0)
+        self.assertAlmostEqual(result["speech_threshold_db"], -66.0)
+
 
 class PreferredDeviceTests(unittest.TestCase):
     def test_choose_preferred_device_picks_seeed_output(self) -> None:

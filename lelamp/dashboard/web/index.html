@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#08111a">
   <title>LeLamp 本地展台</title>
-  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="stylesheet" href="/static/dashboard.css?v=4">
 </head>
 <body>
   <div class="app-shell">
@@ -13,9 +13,6 @@
       <div class="topbar-copy">
         <p class="eyebrow">LeLamp</p>
         <h1>LeLamp 本地展台</h1>
-        <p class="subtitle">
-          面向演示现场的本地控制台。先看灯现在的状态，再决定是否启动、互动或进入休息。
-        </p>
       </div>
       <div class="topbar-meta">
         <div class="status-group">
@@ -45,7 +42,6 @@
               <p class="eyebrow eyebrow--panel">当前状态</p>
               <h2>灯现在在做什么</h2>
             </div>
-            <p class="section-note">第一眼先看状态与气质，技术细节留在下方。</p>
           </div>
 
           <div class="hero-grid">
@@ -93,20 +89,34 @@
               <p class="eyebrow eyebrow--panel">第二层</p>
               <h2>动作控制</h2>
             </div>
-            <p class="section-note">所有动作仍然串行执行，只是文案更适合现场演示。</p>
           </div>
 
           <div class="control-grid">
             <button id="startupButton" class="action-button action-button--primary" type="button">启动灯</button>
             <button id="stopButton" class="action-button" type="button">回到待机</button>
-            <div class="recording-picker">
-              <label for="recordingSelect">动作选择</label>
-              <select id="recordingSelect"></select>
-            </div>
-            <button id="playButton" class="action-button" type="button">播放动作</button>
             <button id="shutdownPoseButton" class="action-button action-button--warn" type="button">进入休息</button>
             <button id="lightAmberButton" class="action-button action-button--amber" type="button">暖黄灯光</button>
             <button id="lightClearButton" class="action-button" type="button">关闭灯光</button>
+          </div>
+
+          <div class="recording-picker recording-picker--wide">
+            <label>动作选择 &mdash; 点击直接播放</label>
+            <div id="recordingPicker" class="recording-button-grid">
+              <button class="action-button recording-button" data-recording="curious" type="button">curious</button>
+              <button class="action-button recording-button" data-recording="excited" type="button">excited</button>
+              <button class="action-button recording-button" data-recording="happy_wiggle" type="button">happy_wiggle</button>
+              <button class="action-button recording-button" data-recording="headshake" type="button">headshake</button>
+              <button class="action-button recording-button" data-recording="home_safe" type="button">home_safe</button>
+              <button class="action-button recording-button" data-recording="idle" type="button">idle</button>
+              <button class="action-button recording-button" data-recording="nod" type="button">nod</button>
+              <button class="action-button recording-button" data-recording="power_off" type="button">power_off</button>
+              <button class="action-button recording-button" data-recording="sad" type="button">sad</button>
+              <button class="action-button recording-button" data-recording="scanning" type="button">scanning</button>
+              <button class="action-button recording-button" data-recording="shock" type="button">shock</button>
+              <button class="action-button recording-button" data-recording="shy" type="button">shy</button>
+              <button class="action-button recording-button" data-recording="sleep_pose" type="button">sleep_pose</button>
+              <button class="action-button recording-button" data-recording="wake_up" type="button">wake_up</button>
+            </div>
           </div>
         </div>
       </section>
@@ -118,7 +128,6 @@
               <p class="eyebrow eyebrow--panel">现场手动</p>
               <h2>手动干预（fallback）</h2>
             </div>
-            <p class="section-note">FluxChi 或摄像头掉线时，演示人按此触发对应风格，绕过自动通路。</p>
           </div>
 
           <div class="intervene-grid">
@@ -215,6 +224,6 @@
     </main>
   </div>
 
-  <script src="/static/dashboard.js"></script>
+  <script src="/static/dashboard.js?v=4"></script>
 </body>
 </html>

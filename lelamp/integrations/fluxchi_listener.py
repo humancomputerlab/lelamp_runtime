@@ -356,7 +356,17 @@ class VoiceGate:
         if age_sec > self.stale_sec:
             return False, f"stale_{age_sec:.1f}s"
         local = data.get("local_state") or data.get("status") or ""
-        if local in {"user_speaking", "agent_speaking"}:
+        # Local voice telemetry writes runtime-facing states
+        # (listening/committing/replying), while the synthetic harness
+        # interrupt check writes user_speaking/agent_speaking. Treat
+        # both vocabularies as "voice is active, don't keep nudging".
+        if local in {
+            "user_speaking",
+            "agent_speaking",
+            "listening",
+            "committing",
+            "replying",
+        }:
             return True, f"voice_{local}"
         asr_status = data.get("last_asr_status") or ""
         if asr_status in {"speaking", "active"}:

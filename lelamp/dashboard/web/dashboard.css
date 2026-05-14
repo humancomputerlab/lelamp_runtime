@@ -391,11 +391,28 @@ body::before {
   background: rgba(255, 255, 255, 0.035);
 }
 
+.recording-picker--wide {
+  margin-top: 14px;
+}
+
 .recording-picker label {
   color: var(--muted);
   font-size: 11px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+}
+
+.recording-button-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.recording-button-grid .action-button {
+  min-height: 28px;
+  font-size: 11px;
+  padding: 5px 6px;
+  border-radius: 10px;
 }
 
 .action-button,
@@ -595,6 +612,10 @@ body::before {
   .details-grid,
   .intervene-grid {
     grid-template-columns: 1fr;
+  }
+
+  .recording-button-grid {
+    grid-template-columns: repeat(3, 1fr);
   }
 
   .hero-copy {

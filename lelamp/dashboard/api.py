@@ -230,7 +230,10 @@ def create_app(
         index_path = WEB_DIR / "index.html"
         if not index_path.is_file():
             raise HTTPException(status_code=404, detail="Dashboard UI not built yet.")
-        return FileResponse(index_path)
+        return FileResponse(
+            index_path,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 
     @app.get("/api/state")
     def get_state() -> dict[str, object]:

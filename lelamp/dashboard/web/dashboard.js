@@ -6,12 +6,6 @@ var DashboardApp = (function () {
       label: "启动灯",
       runningLabel: "启动中",
     },
-    playButton: {
-      actionKey: "play",
-      baseClass: "action-button",
-      label: "播放动作",
-      runningLabel: "动作中",
-    },
     stopButton: {
       actionKey: "stop",
       baseClass: "action-button",
@@ -360,6 +354,13 @@ var DashboardApp = (function () {
         node.className = buttonClass(meta.baseClass, config.state || "enabled");
       }
     });
+
+    // Recording buttons mirror the "play" action availability.
+    var playConfig = actions["play"] || { enabled: false };
+    var recordingButtons = documentRef.querySelectorAll(".recording-button");
+    for (var i = 0; i < recordingButtons.length; i++) {
+      recordingButtons[i].disabled = playConfig.enabled === false;
+    }
   }
 
   function applyInterveneStatus(documentRef, intervene) {
@@ -375,38 +376,24 @@ var DashboardApp = (function () {
     }
   }
 
-  function populateRecordings(documentRef, recordings) {
-    var select = byId(documentRef, "recordingSelect");
-    var currentValue;
-    if (!select) {
-      return;
+  function wireRecordingButtons(documentRef, fetchRef) {
+    var buttons = documentRef.querySelectorAll(".recording-button");
+    for (var i = 0; i < buttons.length; i++) {
+      (function (btn) {
+        var recording = btn.getAttribute("data-recording");
+        if (!recording) {
+          return;
+        }
+        btn.addEventListener("click", function () {
+          if (btn.disabled) {
+            return;
+          }
+          postJson(fetchRef, "/api/actions/play", { name: recording }).then(function () {
+            return refresh(documentRef, fetchRef);
+          });
+        });
+      })(buttons[i]);
     }
-
-    currentValue = select.value;
-    select.innerHTML = "";
-    if (select.children && typeof select.children.length === "number") {
-      select.children.length = 0;
-    }
-    if (!recordings || !recordings.length) {
-      select.disabled = true;
-      select.value = "";
-      return;
-    }
-
-    select.disabled = false;
-    recordings.forEach(function (recording, index) {
-      var option = documentRef.createElement("option");
-      option.value = recording;
-      option.textContent = recording;
-      if (currentValue && currentValue === recording) {
-        select.value = recording;
-      } else if (!select.value && index === 0) {
-        select.value = recording;
-      }
-      if (select.appendChild) {
-        select.appendChild(option);
-      }
-    });
   }
 
   function heroCaption(motion) {
@@ -528,7 +515,8 @@ var DashboardApp = (function () {
     setClassName(byId(documentRef, "connectionStatus"), "status-pill status-pill--" + statusTone(connection));
     setClassName(byId(documentRef, "systemStatus"), "status-pill status-pill--" + statusTone(system.status || "unknown"));
 
-    populateRecordings(documentRef, motion.available_recordings || []);
+    // Recordings dropdown is managed by loadActions(); renderState only
+    // updates the read-only recording list tokens in the details panel.
     renderTokens(byId(documentRef, "reachableUrls"), reachable, "还没有可访问地址。");
     renderTokens(byId(documentRef, "recordingList"), motion.available_recordings || [], "还没有发现动作录制。");
     renderHardwareNotes(documentRef, motion, light, audio, voice);
@@ -573,7 +561,6 @@ var DashboardApp = (function () {
           runtimeMeta.dashboardPort = payload.config.dashboard_port || runtimeMeta.dashboardPort;
         }
         applyActionAvailability(documentRef, payload);
-        populateRecordings(documentRef, payload.recordings || []);
         applyInterveneStatus(documentRef, payload.intervene);
         return payload;
       })
@@ -610,7 +597,7 @@ var DashboardApp = (function () {
   }
 
   function wireActions(documentRef, fetchRef) {
-    var recordingSelect = byId(documentRef, "recordingSelect");
+    wireRecordingButtons(documentRef, fetchRef);
 
     function bind(id, handler) {
       var node = byId(documentRef, id);
@@ -621,13 +608,6 @@ var DashboardApp = (function () {
 
     bind("startupButton", function () {
       postJson(fetchRef, "/api/actions/startup").then(function () {
-        return refresh(documentRef, fetchRef);
-      });
-    });
-    bind("playButton", function () {
-      postJson(fetchRef, "/api/actions/play", {
-        name: recordingSelect ? recordingSelect.value : "",
-      }).then(function () {
         return refresh(documentRef, fetchRef);
       });
     });
@@ -685,9 +665,7 @@ var DashboardApp = (function () {
         renderState(documentRef, state);
       }).then(function () {
         windowRef.setInterval(function () {
-          pollState(fetchRef, function (state) {
-            renderState(documentRef, state);
-          });
+          refresh(documentRef, fetchRef);
         }, effectivePollMs);
         return payload;
       });
