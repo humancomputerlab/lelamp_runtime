@@ -162,6 +162,7 @@ class RuntimeSettings:
     model_base_url: str | None
     model_name: str | None
     model_voice: str
+    model_temperature: float
     qwen_use_server_vad: bool
     glm_use_server_vad: bool
     agent_language: str
@@ -213,6 +214,7 @@ def load_runtime_settings() -> RuntimeSettings:
         model_base_url=_get_optional_str("MODEL_BASE_URL") or _default_model_base_url(model_provider),
         model_name=_get_optional_str("MODEL_NAME") or _default_model_name(model_provider),
         model_voice=_get_str("MODEL_VOICE", _default_model_voice(model_provider)),
+        model_temperature=_get_float("MODEL_TEMPERATURE", 0.8),
         qwen_use_server_vad=_get_bool("LELAMP_QWEN_USE_SERVER_VAD", False),
         glm_use_server_vad=_get_bool("LELAMP_GLM_USE_SERVER_VAD", False),
         agent_language=_get_str("LELAMP_AGENT_LANGUAGE", "zh-CN"),

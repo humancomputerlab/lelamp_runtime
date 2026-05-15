@@ -126,6 +126,7 @@ class QwenRealtimeModel(oai_rt.RealtimeModel):
             model=settings.model_name or _QWEN_DEFAULT_MODEL,
             voice=settings.model_voice,
             modalities=["text", "audio"],
+            temperature=settings.model_temperature,
             input_audio_transcription=build_qwen_input_audio_transcription(),
             turn_detection=build_qwen_turn_detection() if settings.qwen_use_server_vad else None,
             tool_choice="auto",
