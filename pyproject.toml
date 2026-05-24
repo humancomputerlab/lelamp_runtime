@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "lelamp-runtime"
 version = "0.1.0"
@@ -5,6 +9,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.115,<1.0",
     "feetech-servo-sdk>=1.0.0",
     "lerobot>=0.3.3",
     "livekit-agents[openai]~=1.2",
@@ -16,13 +21,34 @@ dependencies = [
     "pyaudio>=0.2.14",
     "python-dotenv",
     "sounddevice>=0.5.2",
+    "uvicorn[standard]>=0.34,<1.0",
 ]
 
 [tool.uv.sources]
 lerobot = { git = "https://github.com/huggingface/lerobot" }
 
 [project.optional-dependencies]
+dev = [
+    "httpx>=0.28,<1.0",
+    "js2py>=0.74,<1.0",
+]
+
 hardware = [
     "adafruit-circuitpython-neopixel",
     "rpi-ws281x",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["lelamp*"]
+
+[tool.setuptools.package-data]
+lelamp = ["recordings/*.csv"]
+"lelamp.dashboard" = ["web/*.html", "web/*.css", "web/*.js"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:lelamp main.py is deprecated; use smooth_animation.py.*:DeprecationWarning",
 ]

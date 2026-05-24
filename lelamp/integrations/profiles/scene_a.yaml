@@ -1,0 +1,55 @@
+# Scene A — 传统干预样式（shy / headshake / sad+nod）
+#
+# 对应 DEMO_PLAN_2026-04-21.md §3 Week 1 骨架，也是 5/5 答辩的基线剧本。
+# 这个 profile 被 fluxchi_listener.py 在启动时加载。
+#
+# 调阈值后保存并重启 listener 即可生效，不需要重启 LeLamp agent。
+#
+# recording 必须是 lelamp/recordings/ 下真实存在的 csv 文件名（去掉 .csv）。
+# 当前可用：curious / excited / happy_wiggle / headshake / nod / sad /
+#          scanning / shock / shy / wake_up / home_safe / idle
+#
+# rgb 在动作前触发 solid 灯光（可选）。暖色 (255, 200, 80) 约 2700K。
+
+name: scene_a_traditional
+version: 0
+sensors_required: [vision]
+
+debounce:
+  same_level_sec: 30
+  level_upgrade_immediate: true
+
+voice_gate:
+  block_when_speaking: true
+  block_recent_asr_sec: 5
+
+thresholds:
+  severe:
+    stamina_max: 25
+    # 出现 microsleep 就直接 severe，不等 stamina 低到底
+    level3_required: [microsleep_detected]
+    action:
+      express: sad
+      followup: nod
+      rgb: [255, 100, 50]
+
+  moderate:
+    stamina_max: 40
+    perclos_ewma_min: 0.25
+    action:
+      express: headshake
+      rgb: [255, 170, 50]
+
+  mild:
+    stamina_max: 60
+    perclos_ewma_min: 0.15
+    dwell_sec: 30
+    action:
+      express: shy
+      rgb: [255, 200, 80]
+
+  recovered:
+    stamina_min: 65
+    trigger: after_any_intervention
+    action:
+      express: happy_wiggle

@@ -1,0 +1,81 @@
+# Scene B — 呼吸共振样式（shared-breath co-regulation）
+#
+# 对应 DEMO_PLAN §2 的 R4 pivot：lamp 不打断用户、不摇头，而是用呼吸节奏和色温
+# 示范慢呼吸，邀请用户跟着放下来。"Not an alert, an invitation."
+#
+# 关键动作：action.type: breath；不播 recording。
+#   - 连续 ~90s，bpm 从 12 线性降到 4，色温从 3000K 线性压到 2400K
+#   - 吸气→亮+偏冷，呼气→暗+偏暖
+#
+# 和 Scene A 的差：
+#   - mild / moderate 不再播 shy / headshake 这种离散动作
+#   - severe 仍然保留 sad+nod（已经到 microsleep 级别，需要明确打断）
+#   - 触发窗口放宽（mild 从 stamina=60 起），因为 breath 本身温和得多，假阳性代价低
+#
+# 硬件要求：motor_bus sentinel 要活，fluxchi_listener 会拿 ProxyRGBService 直接推
+# solid 帧到 /rgb/solid，不走 dashboard（dashboard busy-lock 不适合 10Hz 连续调制）。
+
+name: scene_b_breath
+version: 0
+sensors_required: [vision]
+
+debounce:
+  # 呼吸本身已经 90s 了，debounce 到 120s 避免一段刚结束又立刻起下一段
+  same_level_sec: 120
+  level_upgrade_immediate: true
+
+voice_gate:
+  block_when_speaking: true
+  block_recent_asr_sec: 5
+
+thresholds:
+  severe:
+    stamina_max: 25
+    level3_required: [microsleep_detected]
+    # microsleep 保留 Scene A 的离散打断——这时需要的是明确信号，不是慢呼吸
+    action:
+      type: motion
+      express: sad
+      followup: nod
+      rgb: [255, 100, 50]
+
+  moderate:
+    stamina_max: 40
+    perclos_ewma_min: 0.25
+    action:
+      type: breath
+      breath:
+        duration_sec: 90.0
+        bpm_start: 12.0
+        bpm_end: 4.0
+        kelvin_start: 3000.0
+        kelvin_end: 2400.0
+        intensity_base: 0.35
+        intensity_peak: 1.0
+        tick_hz: 10.0
+        name: moderate_breath
+
+  mild:
+    stamina_max: 60
+    perclos_ewma_min: 0.15
+    dwell_sec: 30
+    # 轻度样本：更短、更温和；10bpm→6bpm，色温 3200K→2700K
+    action:
+      type: breath
+      breath:
+        duration_sec: 60.0
+        bpm_start: 10.0
+        bpm_end: 6.0
+        kelvin_start: 3200.0
+        kelvin_end: 2700.0
+        intensity_base: 0.5
+        intensity_peak: 0.95
+        tick_hz: 10.0
+        name: mild_breath
+
+  recovered:
+    stamina_min: 65
+    trigger: after_any_intervention
+    action:
+      type: motion
+      express: happy_wiggle

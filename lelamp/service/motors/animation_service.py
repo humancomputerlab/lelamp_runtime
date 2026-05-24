@@ -4,18 +4,39 @@ import time
 import threading
 from typing import Any, List, Dict, Optional, Tuple
 from lelamp.follower import LeLampFollowerConfig, LeLampFollower
+from lelamp.motion_profiles import (
+    build_dynamic_startup_actions,
+    first_pose,
+    transform_actions_relative_to_pose,
+)
+
+
+STARTUP_SETTLE_FRAMES_PER_JOINT = 15
+STARTUP_SETTLE_HOLD_FRAMES = 8
 
 
 class AnimationService:
-    def __init__(self, port: str, lamp_id: str, fps: int = 30, duration: float = 5.0, idle_recording: str = "idle"):
+    def __init__(
+        self,
+        port: str,
+        lamp_id: str,
+        fps: int = 30,
+        duration: float = 5.0,
+        idle_recording: str = "idle",
+        home_recording: str | None = None,
+        use_home_pose_relative: bool = False,
+    ):
         self.port = port
         self.lamp_id = lamp_id
         self.fps = fps
         self.duration = duration
         self.idle_recording = idle_recording
+        self.home_recording = home_recording or idle_recording
+        self.use_home_pose_relative = use_home_pose_relative
         self.robot_config = LeLampFollowerConfig(port=port, id=lamp_id)
         self.robot: LeLampFollower = None
         self.recordings_dir = os.path.join(os.path.dirname(__file__), "..", "..", "recordings")
+        self._home_pose: Optional[Dict[str, float]] = None
         
         # State management
         self._recording_cache: Dict[str, List[Dict[str, float]]] = {}
@@ -25,6 +46,8 @@ class AnimationService:
         self._current_actions: List[Dict[str, float]] = []
         self._interpolation_frames: int = 0
         self._interpolation_target: Optional[Dict[str, float]] = None
+        self._playback_done = threading.Event()
+        self._pending_playback_completion = False
         
         # Custom event handling
         self._running = threading.Event()
@@ -36,14 +59,13 @@ class AnimationService:
         self.robot = LeLampFollower(self.robot_config)
         self.robot.connect(calibrate=False)
         print(f"Animation service connected to {self.port}")
+        self._home_pose = self._load_home_pose()
+        self._current_state = self._read_current_pose()
         
         # Start event processing thread
         self._running.set()
         self._event_thread = threading.Thread(target=self._event_loop, daemon=True)
         self._event_thread.start()
-        
-        # Initialize with idle recording via self dispatch
-        self.dispatch("play", self.idle_recording)
 
     def stop(self, timeout: float = 5.0):
         # Stop event processing
@@ -54,6 +76,7 @@ class AnimationService:
         if self.robot:
             self.robot.disconnect()
             self.robot = None
+        self._playback_done.set()
     
     def dispatch(self, event_type: str, payload: Any):
         """Dispatch an event - same interface as ServiceBase"""
@@ -88,6 +111,8 @@ class AnimationService:
     def handle_event(self, event_type: str, payload: Any):
         if event_type == "play":
             self._handle_play(payload)
+        elif event_type == "startup":
+            self._handle_startup(payload)
         else:
             print(f"Unknown event type: {event_type}")
     
@@ -101,6 +126,9 @@ class AnimationService:
         actions = self._load_recording(recording_name)
         if actions is None:
             return
+
+        self._playback_done.clear()
+        self._pending_playback_completion = False
         
         print(f"Starting {recording_name} with interpolation")
         
@@ -116,11 +144,54 @@ class AnimationService:
         else:
             self._interpolation_frames = 0
             self._interpolation_target = None
+
+    def _handle_startup(self, recording_name: str):
+        """Generate startup animation from the live pose into home pose, then wake up."""
+        if not self.robot:
+            print("Robot not connected")
+            return
+
+        wake_up_actions = self._load_raw_recording(recording_name)
+        if not wake_up_actions:
+            self._handle_play(recording_name)
+            return
+
+        current_pose = self._read_current_pose() or self._current_state
+        home_pose = self._home_pose or first_pose(self._load_recording(self.idle_recording) or [])
+
+        if current_pose is None or home_pose is None:
+            self._handle_play(recording_name)
+            return
+
+        startup_actions = build_dynamic_startup_actions(
+            current_pose,
+            home_pose,
+            wake_up_actions,
+            settle_frame_count=STARTUP_SETTLE_FRAMES_PER_JOINT,
+            settle_hold_frames=STARTUP_SETTLE_HOLD_FRAMES,
+        )
+
+        self._playback_done.clear()
+        self._pending_playback_completion = False
+        self._current_state = current_pose.copy()
+        self._current_recording = f"startup:{recording_name}"
+        self._current_actions = startup_actions
+        self._current_frame_index = 0
+        self._interpolation_frames = 0
+        self._interpolation_target = None
     
     def _continue_playback(self):
         """Continue current playback - called every frame"""
         if not self._current_recording or not self._current_actions:
             return
+
+        if (
+            self._pending_playback_completion
+            and self._current_recording == self.idle_recording
+            and self._interpolation_frames == 0
+        ):
+            self._pending_playback_completion = False
+            self._playback_done.set()
         
         try:
             # Handle interpolation to first frame
@@ -156,6 +227,7 @@ class AnimationService:
                         self._current_recording = self.idle_recording
                         self._current_actions = idle_actions
                         self._current_frame_index = 0
+                        self._pending_playback_completion = True
                         # Set up interpolation back to idle
                         if self._current_state is not None:
                             self._interpolation_frames = int(self.duration * self.fps)
@@ -170,6 +242,11 @@ class AnimationService:
             self._current_recording = None
             self._current_actions = []
             self._current_frame_index = 0
+            self._pending_playback_completion = False
+            self._playback_done.set()
+
+    def wait_until_playback_complete(self, timeout: float | None = None) -> bool:
+        return self._playback_done.wait(timeout=timeout)
     
     def get_available_recordings(self) -> List[str]:
         """Get list of recording names available for this lamp ID"""
@@ -208,6 +285,9 @@ class AnimationService:
                     # Extract action data (exclude timestamp column)
                     action = {key: float(value) for key, value in row.items() if key != 'timestamp'}
                     actions.append(action)
+
+            if self._should_transform_recording(recording_name):
+                actions = transform_actions_relative_to_pose(actions, self._home_pose)
             
             # Cache the recording
             self._recording_cache[recording_name] = actions
@@ -216,5 +296,47 @@ class AnimationService:
         except Exception as e:
             print(f"Error loading recording {recording_name}: {e}")
             return None
+
+    def _load_home_pose(self) -> Optional[Dict[str, float]]:
+        actions = self._load_raw_recording(self.home_recording)
+        return first_pose(actions or [])
+
+    def _read_current_pose(self) -> Optional[Dict[str, float]]:
+        if not self.robot:
+            return None
+
+        try:
+            observation = self.robot.bus.sync_read("Present_Position")
+        except Exception as e:
+            print(f"Error reading current pose: {e}")
+            return None
+
+        return {f"{joint}.pos": value for joint, value in observation.items()}
+
+    def _load_raw_recording(self, recording_name: str) -> Optional[List[Dict[str, float]]]:
+        csv_filename = f"{recording_name}.csv"
+        csv_path = os.path.join(self.recordings_dir, csv_filename)
+
+        if not os.path.exists(csv_path):
+            print(f"Recording not found: {csv_path}")
+            return None
+
+        try:
+            with open(csv_path, 'r') as csvfile:
+                csv_reader = csv.DictReader(csvfile)
+                actions = []
+                for row in csv_reader:
+                    actions.append({key: float(value) for key, value in row.items() if key != 'timestamp'})
+            return actions
+        except Exception as e:
+            print(f"Error loading recording {recording_name}: {e}")
+            return None
+
+    def _should_transform_recording(self, recording_name: str) -> bool:
+        return (
+            self.use_home_pose_relative
+            and self._home_pose is not None
+            and recording_name != self.home_recording
+        )
     
     

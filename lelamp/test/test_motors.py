@@ -1,12 +1,16 @@
 import argparse
-import time
 import sys
 import os
+
+if __name__ != "__main__" and os.getenv("LELAMP_RUN_HARDWARE_MOTOR_TEST") != "1":
+    import pytest
+
+    pytest.skip("hardware motor smoke test disabled", allow_module_level=True)
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from service.motors import MotorsService
-from service.base import Priority
+
 
 def test_motors_service():
     parser = argparse.ArgumentParser(description="Test Motors Service")

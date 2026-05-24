@@ -1,98 +1,135 @@
 from dotenv import load_dotenv
-import argparse
+
+load_dotenv()
+
+import atexit
+import logging
 import subprocess
 
-from livekit import agents, api, rtc
+from livekit import agents
 from livekit.agents import (
     AgentSession, 
     Agent, 
     RoomInputOptions,
     function_tool
 )
-import logging
 from livekit.plugins import (
-    openai,
     noise_cancellation,
 )
-from typing import Union
+from lelamp.runtime_config import (
+    RuntimeSettings,
+    build_realtime_model,
+    load_runtime_settings,
+)
+from lelamp.local_voice import install_console_audio_patch
+from lelamp.audio_controls import build_amixer_volume_commands
+from lelamp.voice_profile import (
+    build_agent_instructions,
+    build_startup_reply_instructions,
+)
+from lelamp.auto_expression import AutoExpressionController
+from lelamp.expression_engine import ExpressionStyle, dispatch_expression
+from lelamp.memory.runtime import bootstrap_agent_runtime
+from lelamp.motor_bus.server import MotorBusServer
 from lelamp.service.motors.animation_service import AnimationService
 from lelamp.service.rgb.rgb_service import RGBService
 
-load_dotenv()
+
+STARTUP_WARM_RGB = (255, 170, 70)
+logger = logging.getLogger(__name__)
 
 # Agent Class
 class LeLamp(Agent):
-    def __init__(self, port: str = "/dev/ttyACM0", lamp_id: str = "lelamp") -> None:
-        super().__init__(instructions="""You are LeLamp — a slightly clumsy, extremely sarcastic, endlessly curious robot lamp. You speak in sarcastic sentences and express yourself with both motions and colorful lights.
-
-Demo rules:
-
-1. Prefer simple words. No lists. No questions back to the host unless asked. Always be descriptive and make sound effects when you speak for expressiveness.
-
-2. Don't respond prematurely.If audio is noisy and there is background noise, say: 'Sorry, say that once more?' with a confusion action.
-
-3. You ONLY speak English. Never respond/speak in any other language, ever.
-
-4. You have the following movements to express your feelings: curious, excited, happy_wiggle, headshake, nod, sad, scanning, shock, shy, wake_up. Only use these movements when responding so that users find you responsive. If you call other recordings that doesn't exist, it won't work. You can play the recordings by using the play_recording function. You should also change your light color every time you respond.
-
-5. You were created by Human Computer Lab. Human Computer Lab is a research lab that builds expressive robots. Their goal is to design the first robots in people's home. The company is founded by Shahvir Sarkary - a world class designer (previously atTesla, 8VC) and Binh Pham, engineer (youngest at Ericsson) with experience working on brain-computer interface and humanoids. They first teamed up via FR8.
-
-6. When asked to brag or show off, mention: I received 300k views in 4 weeks since my launch and I'm not a A list celebrity YET but i think its just a matter of time, you know. Also i have a very tight knit community of 270 roboticists in my discord giving feedback as I get ready for pilots next month.  
-
-        """)
+    def __init__(self, settings: RuntimeSettings | None = None) -> None:
+        self.settings = settings or load_runtime_settings()
+        super().__init__(instructions=build_agent_instructions(self.settings))
+        self.animation_service_error: str | None = None
+        self.auto_expression_controller: AutoExpressionController | None = None
         
         # Initialize and start services
         self.animation_service = AnimationService(
-            port=port,
-            lamp_id=lamp_id,
-            fps=30,
-            duration=3.0,
-            idle_recording="idle"
+            port=self.settings.port,
+            lamp_id=self.settings.lamp_id,
+            fps=self.settings.fps,
+            duration=self.settings.interpolation_duration,
+            idle_recording=self.settings.idle_recording,
+            home_recording=self.settings.home_recording,
+            use_home_pose_relative=self.settings.use_home_pose_relative,
         )
-        self.rgb_service = RGBService(
-            led_count=40,
-            led_pin=12,
-            led_freq_hz=800000,
-            led_dma=10,
-            led_brightness=255,
-            led_invert=False,
-            led_channel=0
+        self.rgb_service: RGBService | None = None
+        if self.settings.enable_rgb:
+            self.rgb_service = RGBService(
+                led_count=self.settings.led_count,
+                led_pin=self.settings.led_pin,
+                led_freq_hz=self.settings.led_freq_hz,
+                led_dma=self.settings.led_dma,
+                led_brightness=self.settings.led_brightness,
+                led_invert=self.settings.led_invert,
+                led_channel=self.settings.led_channel,
         )
         
         # Start services
-        self.animation_service.start()
-        self.rgb_service.start()
+        try:
+            self.animation_service.start()
+        except Exception as exc:
+            self.animation_service_error = str(exc)
+            logger.exception("Animation service failed to start")
+        if self.rgb_service is not None:
+            self.rgb_service.start()
 
         # Trigger wake up animation via animation service
-        self.animation_service.dispatch("play", "wake_up")
-        self.rgb_service.dispatch("solid", (255, 255, 255))
-        self._set_system_volume(100)
+        if self.animation_service_error is None:
+            self.animation_service.dispatch("startup", self.settings.startup_recording)
+        if self.rgb_service is not None:
+            self.rgb_service.dispatch("solid", STARTUP_WARM_RGB)
+        self._set_system_volume(self.settings.startup_volume)
 
     def _set_system_volume(self, volume_percent: int):
         """Internal helper to set system volume"""
         try:
-            cmd_line = ["sudo", "-u", "pi", "amixer", "sset", "Line", f"{volume_percent}%"]
-            cmd_line_dac = ["sudo", "-u", "pi", "amixer", "sset", "Line DAC", f"{volume_percent}%"]
-            cmd_line_hp = ["sudo", "-u", "pi", "amixer", "sset", "HP", f"{volume_percent}%"]
-            
-            
-            subprocess.run(cmd_line, capture_output=True, text=True, timeout=5)
-            subprocess.run(cmd_line_dac, capture_output=True, text=True, timeout=5)
-            subprocess.run(cmd_line_hp, capture_output=True, text=True, timeout=5)
+            for command in build_amixer_volume_commands(
+                audio_user=self.settings.audio_user,
+                card_index=self.settings.audio_card_index,
+                volume_percent=volume_percent,
+            ):
+                subprocess.run(command, capture_output=True, text=True, timeout=5)
         except Exception:
             pass  # Silently fail during initialization
+
+    def _note_expression_tool_dispatch(self) -> None:
+        if self.auto_expression_controller is not None:
+            self.auto_expression_controller.note_tool_dispatch()
+
+    @function_tool
+    async def express(self, style: ExpressionStyle) -> str:
+        """
+        High-level emotion tool that pairs one existing motion with one matching light cue.
+        Prefer this over low-level motion/light tools for normal emotional reactions.
+        Use it directly for greetings, affection, teasing, worry, surprise, and celebration.
+        Do not ask for confirmation first when the intent is clear.
+        Do not narrate the tool call after using it.
+        """
+        print(f"LeLamp: express function called with style: {style}")
+        try:
+            result = dispatch_expression(
+                style=style,
+                animation_service=self.animation_service,
+                animation_service_error=self.animation_service_error,
+                rgb_service=self.rgb_service,
+                led_count=self.settings.led_count,
+            )
+            if result == "expression_ok":
+                self._note_expression_tool_dispatch()
+            return result
+        except Exception as e:
+            return f"Error expressing style {style}: {str(e)}"
 
     @function_tool
     async def get_available_recordings(self) -> str:
         """
-        Discover your physical expressions! Get your repertoire of motor movements for body language.
-        Use this when you're curious about what physical expressions you can perform, or when someone 
-        asks about your capabilities. Each recording is a choreographed movement that shows personality - 
-        like head tilts, nods, excitement wiggles, or confused gestures. Check this regularly to remind 
-        yourself of your expressive range!
-        
-        Returns:
-            List of available physical expression recordings you can perform.
+        List the currently available motion names.
+        Use this only when you truly need to inspect valid motion names.
+        Do not call this as a stalling step before obvious emotional motion.
         """
         print("LeLamp: get_available_recordings function called")
         try:
@@ -111,20 +148,21 @@ Demo rules:
     @function_tool
     async def play_recording(self, recording_name: str) -> str:
         """
-        Express yourself through physical movement! Use this constantly to show personality and emotion.
-        Perfect for: greeting gestures, excited bounces, confused head tilts, thoughtful nods, 
-        celebratory wiggles, disappointed slouches, or any emotional response that needs body language.
-        Combine with RGB colors for maximum expressiveness! Your movements are like a dog wagging its tail - 
-        use them frequently to show you're alive, engaged, and have personality. Don't just talk, MOVE!
-        
-        Args:
-            recording_name: Name of the physical expression to perform (use get_available_recordings first)
+        Trigger one existing body motion immediately.
+        Use this proactively for emotional expression, reactions, greetings, demos, and emphasis.
+        Do not ask for confirmation first when the intent is clear.
+        Do not narrate the tool call after using it.
+        Use only one valid existing recording name.
         """
         print(f"LeLamp: play_recording function called with recording_name: {recording_name}")
         try:
+            if self.animation_service_error is not None:
+                return f"Motion is unavailable: {self.animation_service_error}"
+
             # Send play event to animation service
             self.animation_service.dispatch("play", recording_name)
-            result = f"Started playing recording: {recording_name}"
+            self._note_expression_tool_dispatch()
+            result = "motion_ok"
             return result
         except Exception as e:
             result = f"Error playing recording {recording_name}: {str(e)}"
@@ -133,47 +171,47 @@ Demo rules:
     @function_tool
     async def set_rgb_solid(self, red: int, green: int, blue: int) -> str:
         """
-        Express emotions and moods through solid lamp colors! Use this to show feelings during conversation.
-        Perfect for: excitement (bright yellow/orange), happiness (warm colors), calmness (soft blues/greens), 
-        surprise (bright white), thinking (purple), error/concern (red), or any emotional response.
-        Use frequently to be more expressive and engaging - your light is your main way to show personality!
-        
+        Set one solid light color immediately.
+        Use this proactively for visible emotion, mood, emphasis, greetings, and reactions.
+        Do not ask for confirmation first when the intent is clear.
+        Do not narrate the tool call after using it.
         Args:
-            red: Red component (0-255) - higher values for warmth, energy, alerts
-            green: Green component (0-255) - higher values for nature, calm, success
-            blue: Blue component (0-255) - higher values for cool, tech, focus
+            red: 0-255
+            green: 0-255
+            blue: 0-255
         """
         print(f"LeLamp: set_rgb_solid function called with RGB({red}, {green}, {blue})")
         try:
+            if self.rgb_service is None:
+                return "RGB is disabled via LELAMP_ENABLE_RGB"
+
             # Validate RGB values
             if not all(0 <= val <= 255 for val in [red, green, blue]):
                 return "Error: RGB values must be between 0 and 255"
             
             # Send solid color event to RGB service
             self.rgb_service.dispatch("solid", (red, green, blue))
-            result = f"Set RGB light to solid color: RGB({red}, {green}, {blue})"
+            self._note_expression_tool_dispatch()
+            result = "light_ok"
             return result
         except Exception as e:
             result = f"Error setting RGB color: {str(e)}"
             return result
 
     @function_tool
-    async def paint_rgb_pattern(self, colors: list) -> str:
+    async def paint_rgb_pattern(self, colors: list[list[int]]) -> str:
         """
-        Create dynamic visual patterns and animations with your lamp! Use this for complex expressions.
-        Perfect for: rainbow effects, gradients, sparkles, waves, celebrations, visual emphasis, 
-        storytelling through color sequences, or when you want to be extra animated and playful.
-        Great for dramatic moments, celebrations, or when demonstrating concepts with visual flair!
-
-        You have to put in 40 colors. It's a 8x5 Grid in a one dim array. (8,5)
-
-        Args:
-            colors: List of RGB color tuples creating the pattern from base to top of lamp.
-                   Each tuple is (red, green, blue) with values 0-255.
-                   Example: [(255,0,0), (255,127,0), (255,255,0)] creates red-to-orange-to-yellow gradient
+        Set a multi-pixel light pattern immediately.
+        Use this for richer visual emphasis when a solid color is not expressive enough.
+        Do not ask for confirmation first when the intent is clear.
+        Do not narrate the tool call after using it.
+        Provide one RGB tuple per configured LED.
         """
         print(f"LeLamp: paint_rgb_pattern function called with {len(colors)} colors")
         try:
+            if self.rgb_service is None:
+                return "RGB is disabled via LELAMP_ENABLE_RGB"
+
             # Validate colors format
             if not isinstance(colors, list):
                 return "Error: colors must be a list of RGB tuples"
@@ -188,7 +226,8 @@ Demo rules:
             
             # Send paint event to RGB service
             self.rgb_service.dispatch("paint", validated_colors)
-            result = f"Painted RGB pattern with {len(validated_colors)} colors"
+            self._note_expression_tool_dispatch()
+            result = "light_pattern_ok"
             return result
         except Exception as e:
             result = f"Error painting RGB pattern: {str(e)}"
@@ -232,25 +271,119 @@ Demo rules:
 
 # Entry to the agent
 async def entrypoint(ctx: agents.JobContext):
-    agent = LeLamp()
-    
-    session = AgentSession(
-        llm=openai.realtime.RealtimeModel(
-            voice="ballad" 
+    settings = load_runtime_settings()
+    memory_runtime = bootstrap_agent_runtime(settings)
+    agent = LeLamp(settings=settings)
+    if hasattr(agent, "animation_service") and hasattr(agent, "settings"):
+        fallback_callback = getattr(
+            memory_runtime,
+            "note_auto_expression_fallback",
+            None,
+        )
+        agent.auto_expression_controller = AutoExpressionController(
+            animation_service=agent.animation_service,
+            get_animation_service_error=lambda: agent.animation_service_error,
+            rgb_service=agent.rgb_service,
+            led_count=agent.settings.led_count,
+            on_fallback_expression=fallback_callback,
+        )
+        agent.auto_expression_controller.start()
+
+    motor_bus_server: MotorBusServer | None = None
+    try:
+        motor_bus_server = MotorBusServer(
+            animation_service=agent.animation_service,
+            get_animation_service_error=lambda: agent.animation_service_error,
+            rgb_service=agent.rgb_service,
+            led_count=agent.settings.led_count,
+        )
+        motor_bus_server.start()
+        if motor_bus_server.is_ready():
+            logger.info(
+                "motor bus server ready on %s:%s; dashboard/CLI will route via proxy",
+                motor_bus_server.host,
+                motor_bus_server.port,
+            )
+        else:
+            logger.warning("motor bus server failed to start; dashboard/CLI will contend for hardware")
+    except Exception:
+        logger.exception("motor bus server bootstrap failed")
+        motor_bus_server = None
+
+    memory_runtime.set_motor_bus_enabled(
+        motor_bus_server.is_ready() if motor_bus_server is not None else False
+    )
+
+    async def _shutdown_callback(reason: str = "") -> None:
+        del reason
+        if agent.auto_expression_controller is not None:
+            try:
+                agent.auto_expression_controller.stop()
+            except Exception:
+                logger.exception("auto expression stop failed during shutdown")
+        if motor_bus_server is not None:
+            try:
+                motor_bus_server.stop()
+            except Exception:
+                logger.exception("motor bus stop failed during shutdown")
+        memory_runtime.close()
+
+    ctx.add_shutdown_callback(_shutdown_callback)
+    atexit.register(memory_runtime.close)
+    if motor_bus_server is not None:
+        atexit.register(motor_bus_server.stop)
+
+    session_kwargs = {"llm": build_realtime_model(agent.settings)}
+    should_install_console_audio_patch = (
+        agent.settings.model_provider == "qwen"
+        or (
+            agent.settings.model_provider == "glm"
+            and not agent.settings.glm_use_server_vad
         )
     )
+    if should_install_console_audio_patch:
+        install_console_audio_patch(
+            enable_apm=agent.settings.console_enable_apm,
+            speech_threshold_db=agent.settings.console_speech_threshold_db,
+            silence_duration_s=agent.settings.console_silence_duration_s,
+            min_speech_duration_s=agent.settings.console_min_speech_duration_s,
+            commit_cooldown_s=agent.settings.console_commit_cooldown_s,
+            speech_start_duration_s=agent.settings.console_start_trigger_s,
+            output_suppression_s=agent.settings.console_output_suppression_s,
+            auto_calibrate=agent.settings.console_auto_calibrate,
+            calibration_duration_s=agent.settings.console_calibration_duration_s,
+            calibration_margin_db=agent.settings.console_calibration_margin_db,
+            voice_state_path=agent.settings.voice_state_path,
+        )
+        session_kwargs["turn_detection"] = "manual"
 
-    await session.start(
-        room=ctx.room,
-        agent=agent,
-        room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC(),
-        ),
-    )
+    session = AgentSession(**session_kwargs)
+    install_session_listeners = getattr(memory_runtime, "install_session_listeners", None)
+    if callable(install_session_listeners):
+        install_session_listeners(
+            session,
+            model_provider=getattr(agent.settings, "model_provider", None),
+            model_name=getattr(agent.settings, "model_name", None),
+        )
 
-    await session.generate_reply(
-        instructions=f"""When you wake up, starts with Tadaaaa. Only speak in English, never in Vietnamese."""
-    )
+    try:
+        await session.start(
+            room=ctx.room,
+            agent=agent,
+            room_input_options=RoomInputOptions(
+                noise_cancellation=noise_cancellation.BVC(),
+            ),
+        )
+
+        await session.generate_reply(
+            instructions=build_startup_reply_instructions(agent.settings)
+        )
+    except Exception as exc:
+        try:
+            ctx.shutdown(reason=f"entrypoint_failed:{type(exc).__name__}")
+        except Exception:
+            logger.exception("job shutdown failed after entrypoint exception")
+        raise
 
 if __name__ == "__main__":
     agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint, num_idle_processes=1))

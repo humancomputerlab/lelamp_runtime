@@ -2,6 +2,11 @@ import time
 import sys
 import os
 
+if __name__ != "__main__" and os.getenv("LELAMP_RUN_HARDWARE_RGB_TEST") != "1":
+    import pytest
+
+    pytest.skip("hardware rgb smoke test disabled", allow_module_level=True)
+
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from service.rgb import RGBService

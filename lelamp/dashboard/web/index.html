@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#08111a">
+  <title>LeLamp 本地展台</title>
+  <link rel="stylesheet" href="/static/dashboard.css?v=13">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="topbar-copy">
+        <p class="eyebrow">LeLamp</p>
+        <h1>LeLamp 本地展台</h1>
+      </div>
+      <div class="topbar-meta">
+        <div class="status-group">
+          <span class="status-label">连接</span>
+          <div id="connectionStatus" class="status-pill status-pill--offline">离线</div>
+        </div>
+        <div class="status-group">
+          <span class="status-label">系统</span>
+          <div id="systemStatus" class="status-pill status-pill--unknown">未知</div>
+        </div>
+        <div class="status-group">
+          <span class="status-label">当前动作</span>
+          <div id="activeAction" class="status-pill">空闲</div>
+        </div>
+        <div class="status-group">
+          <span class="status-label">刷新</span>
+          <div id="lastUpdateTopbar" class="status-pill">0 毫秒</div>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel hero-panel">
+        <div class="panel-inner">
+          <div class="panel-head panel-head--hero">
+            <div>
+              <p class="eyebrow eyebrow--panel">当前状态</p>
+            </div>
+          </div>
+
+          <div class="hero-grid">
+            <div class="hero-copy">
+              <div class="hero-label">现在</div>
+              <div id="motionStatus" class="hero-state">未连接</div>
+            </div>
+
+            <div class="hero-status-grid">
+              <div class="metric-card metric-card--accent">
+                <span>灯光</span>
+                <strong id="lightStatus">未知</strong>
+                <small id="lightColor">--</small>
+              </div>
+              <div class="metric-card">
+                <span>声音</span>
+                <strong id="audioStatus">未知</strong>
+                <small id="audioVolume">--</small>
+              </div>
+              <div class="metric-card">
+                <span>语音</span>
+                <strong id="voiceStatus">未知</strong>
+                <small id="voiceState">--</small>
+              </div>
+              <div class="metric-card">
+                <span>电机</span>
+                <strong id="motorConnectivity">未知</strong>
+                <small id="calibrationState">未知</small>
+              </div>
+              <div class="metric-card">
+                <span>现场</span>
+                <strong id="uptimeSeconds">0 秒</strong>
+                <small id="lastUpdate">0 毫秒</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel panel--actions">
+        <div class="panel-inner">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow eyebrow--panel">第二层</p>
+              <h2>动作控制</h2>
+            </div>
+          </div>
+
+          <div class="control-grid">
+            <button id="startupButton" class="action-button action-button--primary" type="button">启动灯</button>
+            <button id="stopButton" class="action-button" type="button">回到待机</button>
+            <button id="shutdownPoseButton" class="action-button action-button--warn" type="button">进入休息</button>
+            <button id="lightAmberButton" class="action-button action-button--amber" type="button">暖黄灯光</button>
+            <button id="lightClearButton" class="action-button" type="button">关闭灯光</button>
+          </div>
+
+          <div class="recording-picker recording-picker--wide">
+            <label>动作选择 &mdash; 点击直接播放</label>
+            <div id="recordingPicker" class="recording-button-grid">
+              <button class="action-button recording-button" data-recording="curious" type="button">curious</button>
+              <button class="action-button recording-button" data-recording="excited" type="button">excited</button>
+              <button class="action-button recording-button" data-recording="happy_wiggle" type="button">happy_wiggle</button>
+              <button class="action-button recording-button" data-recording="headshake" type="button">headshake</button>
+              <button class="action-button recording-button" data-recording="home_safe" type="button">home_safe</button>
+              <button class="action-button recording-button" data-recording="idle" type="button">idle</button>
+              <button class="action-button recording-button" data-recording="nod" type="button">nod</button>
+              <button class="action-button recording-button" data-recording="power_off" type="button">power_off</button>
+              <button class="action-button recording-button" data-recording="sad" type="button">sad</button>
+              <button class="action-button recording-button" data-recording="scanning" type="button">scanning</button>
+              <button class="action-button recording-button" data-recording="shock" type="button">shock</button>
+              <button class="action-button recording-button" data-recording="shy" type="button">shy</button>
+              <button class="action-button recording-button" data-recording="sleep_pose" type="button">sleep_pose</button>
+              <button class="action-button recording-button" data-recording="wake_up" type="button">wake_up</button>
+            </div>
+          </div>
+
+          <section class="audio-panel">
+            <div class="audio-panel__head">
+              <span class="audio-panel__eyebrow">声音</span>
+              <span id="audioModeLabel" class="audio-panel__mode">自动</span>
+            </div>
+
+            <div class="audio-panel__body">
+              <div class="audio-card audio-card--volume">
+                <div class="audio-card__header">
+                  <span class="audio-card__label">音量</span>
+                  <span id="volumeDisplay" class="audio-card__value">100%</span>
+                </div>
+                <input id="volumeSlider" type="range" min="0" max="100" value="100" class="audio-slider">
+              </div>
+
+              <div class="audio-card audio-card--threshold">
+                <div class="audio-card__header">
+                  <span class="audio-card__label">语音阈值</span>
+                  <span id="thresholdDisplay" class="audio-card__value">-42 dB</span>
+                </div>
+                <input id="thresholdSlider" type="range" min="-80" max="0" value="-42" step="0.5" class="audio-slider">
+                <div class="audio-card__range">
+                  <span>-80 dB</span>
+                  <span>0 dB</span>
+                </div>
+              </div>
+
+              <div class="audio-card audio-card--actions">
+                <button id="voiceCalibrateBtn" class="audio-btn audio-btn--primary" type="button">重新自适应</button>
+                <label class="audio-toggle">
+                  <input id="voiceManualToggle" type="checkbox">
+                  <span class="audio-toggle__track">
+                    <span class="audio-toggle__thumb"></span>
+                  </span>
+                  <span class="audio-toggle__label">手动模式</span>
+                </label>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="panel panel--intervene">
+        <div class="panel-inner">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow eyebrow--panel">现场手动</p>
+              <h2>手动干预（fallback）</h2>
+            </div>
+          </div>
+
+          <div class="intervene-grid">
+            <button class="action-button" data-intervene="shy" type="button">害羞 shy</button>
+            <button class="action-button" data-intervene="headshake" type="button">摇头 headshake</button>
+            <button class="action-button" data-intervene="sad_nod" type="button">叹气点头 sad+nod</button>
+            <button class="action-button action-button--amber" data-intervene="breath_moderate" type="button">呼吸 moderate</button>
+            <button class="action-button action-button--amber" data-intervene="breath_mild" type="button">呼吸 mild</button>
+            <button id="interveneBreathStop" class="action-button action-button--warn" type="button">停呼吸</button>
+          </div>
+          <p id="interveneStatus" class="intervene-status">呼吸未启动。</p>
+        </div>
+      </section>
+
+      <section class="panel panel--memory">
+        <div class="panel-inner">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow eyebrow--panel">姿态记忆</p>
+              <h2>动作与回位基准</h2>
+            </div>
+            <p class="section-note"></p>
+          </div>
+
+          <div class="snapshot-grid">
+            <div class="snapshot-card">
+              <span>待机基准</span>
+              <strong id="homeRecording">--</strong>
+            </div>
+            <div class="snapshot-card">
+              <span>启动基准</span>
+              <strong id="startupRecording">--</strong>
+            </div>
+            <div class="snapshot-card">
+              <span>当前动作</span>
+              <strong id="currentRecording">--</strong>
+            </div>
+            <div class="snapshot-card">
+              <span>上次完成</span>
+              <strong id="lastCompletedRecording">--</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="diagnosticsPanel" class="panel panel--details">
+        <div class="panel-inner">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow eyebrow--panel">第三层</p>
+              <h2>现场信息</h2>
+            </div>
+          </div>
+
+          <div class="details-grid">
+            <section class="detail-block">
+              <h3>配置片段</h3>
+              <div id="configSnippets" class="token-list"></div>
+            </section>
+
+            <section class="detail-block">
+              <h3>语音监控</h3>
+              <div id="voiceDiagnostics" class="token-list"></div>
+            </section>
+
+            <section class="detail-block detail-block--errors">
+              <h3>错误信息</h3>
+              <div id="errorFeed" class="error-feed"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="/static/dashboard.js?v=13"></script>
+</body>
+</html>

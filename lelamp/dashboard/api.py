@@ -1,0 +1,417 @@
+"""FastAPI app for the local LeLamp dashboard."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from lelamp.dashboard.actions import (
+    BreathSlot,
+    DashboardActionExecutor,
+    build_intervene_action,
+    build_light_actions,
+    build_motion_actions,
+    style_metadata,
+)
+from lelamp.dashboard.runtime_bridge import DashboardRuntimeBridge
+from lelamp.dashboard.samplers import DashboardSamplerLoop
+from lelamp.dashboard.state_store import DashboardStateStore
+from lelamp.runtime_config import load_runtime_settings
+
+
+WEB_DIR = Path(__file__).resolve().parent / "web"
+
+_ACTION_META = {
+    "startup": {
+        "label": "启动灯",
+        "running_label": "启动中",
+        "section": "motion",
+    },
+    "play": {
+        "label": "播放动作",
+        "running_label": "动作中",
+        "disabled_label": "暂无动作",
+        "section": "motion",
+        "requires_recordings": True,
+    },
+    "stop": {
+        "label": "回到待机",
+        "running_label": "回位中",
+        "section": "motion",
+    },
+    "shutdown_pose": {
+        "label": "进入休息",
+        "running_label": "休息中",
+        "section": "motion",
+    },
+    "light_solid": {
+        "label": "暖黄灯光",
+        "running_label": "点亮中",
+        "section": "light",
+    },
+    "light_clear": {
+        "label": "关闭灯光",
+        "running_label": "关闭中",
+        "section": "light",
+    },
+}
+
+
+def _state_snapshot_for_api(snapshot: dict[str, object], *, expose_transcripts: bool) -> dict[str, object]:
+    payload = dict(snapshot)
+    voice = payload.get("voice")
+    if not expose_transcripts and isinstance(voice, dict):
+        voice_payload = dict(voice)
+        voice_payload["last_asr_text"] = None
+        voice_payload["last_reply_text"] = None
+        payload["voice"] = voice_payload
+    return payload
+
+
+def _receipt_response(receipt: Any) -> JSONResponse:
+    status_code = 202
+    if not receipt.ok and getattr(receipt, "error", None) == "busy":
+        status_code = 409
+    elif not receipt.ok:
+        status_code = 500
+    return JSONResponse(status_code=status_code, content=dict(vars(receipt)))
+
+
+def _catalog_action_key(active_action: str | None) -> str | None:
+    if active_action is None:
+        return None
+    if active_action.startswith("play:"):
+        return "play"
+    if active_action == "light:solid":
+        return "light_solid"
+    if active_action == "light:clear":
+        return "light_clear"
+    return active_action
+
+
+def _running_label(action_key: str, active_action: str | None) -> str:
+    meta = _ACTION_META[action_key]
+    running_label = meta["running_label"]
+    if action_key == "play" and active_action and ":" in active_action:
+        return running_label.format(name=active_action.split(":", 1)[1])
+    return running_label
+
+
+def _action_catalog(
+    snapshot: dict[str, object],
+    recordings: list[str],
+    *,
+    busy: bool,
+    active_action: str | None,
+) -> dict[str, dict[str, object]]:
+    active_key = _catalog_action_key(active_action)
+    motion_status = snapshot.get("motion", {}).get("status", "unknown")
+    light_status = snapshot.get("light", {}).get("status", "unknown")
+    catalog: dict[str, dict[str, object]] = {}
+
+    for action_key, meta in _ACTION_META.items():
+        section_status = motion_status if meta["section"] == "motion" else light_status
+
+        if busy:
+            if action_key == active_key:
+                catalog[action_key] = {
+                    "enabled": False,
+                    "state": "running",
+                    "label": _running_label(action_key, active_action),
+                }
+            else:
+                catalog[action_key] = {
+                    "enabled": False,
+                    "state": "disabled",
+                    "label": "执行中",
+                }
+            continue
+
+        if meta.get("requires_recordings") and not recordings:
+            catalog[action_key] = {
+                "enabled": False,
+                "state": "disabled",
+                "label": meta["disabled_label"],
+            }
+            continue
+
+        if section_status == "error":
+            catalog[action_key] = {
+                "enabled": True,
+                "state": "error",
+                "label": "动作异常" if meta["section"] == "motion" else "灯光异常",
+            }
+            continue
+
+        catalog[action_key] = {
+            "enabled": True,
+            "state": "enabled",
+            "label": meta["label"],
+        }
+
+    return catalog
+
+
+def _default_breath_rgb_factory():
+    """Build a ProxyRGBService for the manual fallback breath.
+
+    Same path ``fluxchi_listener._get_breath_rgb_service`` uses, kept in
+    sync with it: breath refuses to new its own RGBService (would fight
+    the voice agent for the serial port / LED strip), so we go through
+    motor_bus. If the agent isn't up, we raise — the /api/actions/intervene
+    route maps that to a 500 with a readable error.
+    """
+    from lelamp.motor_bus.client import (
+        REQUIRE_RGB,
+        build_rgb_service,
+        current_sentinel,
+    )
+
+    sentinel = current_sentinel(require=REQUIRE_RGB, probe_timeout=1.0)
+    if sentinel is None:
+        raise RuntimeError(
+            "breath requires motor_bus sentinel; start the agent/motor_bus server first"
+        )
+
+    def _no_fallback():
+        raise RuntimeError("breath refuses to bypass motor_bus; check agent is up")
+
+    return build_rgb_service(_no_fallback)
+
+
+def _write_voice_state(settings, updates: dict[str, object]) -> None:
+    cmd_path = Path("/tmp/lelamp-dashboard-cmd.json")
+    if cmd_path.is_file():
+        try:
+            data = json.loads(cmd_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    else:
+        data = {}
+    data.update(updates)
+    cmd_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def create_app(
+    *,
+    settings=None,
+    store=None,
+    bridge=None,
+    executor=None,
+    breath_slot=None,
+    enable_background: bool = True,
+) -> FastAPI:
+    settings = settings or load_runtime_settings()
+    store = store or DashboardStateStore()
+    bridge = bridge or DashboardRuntimeBridge(settings)
+    executor = executor or DashboardActionExecutor(store)
+    breath_slot = breath_slot or BreathSlot(_default_breath_rgb_factory)
+    sampler = (
+        DashboardSamplerLoop(store, settings, bridge, executor)
+        if enable_background
+        else None
+    )
+
+    motion_actions = build_motion_actions(executor, bridge)
+    light_actions = build_light_actions(executor, bridge)
+    intervene_action = build_intervene_action(executor, bridge, breath_slot)
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        if sampler is not None:
+            sampler.start()
+        try:
+            yield
+        finally:
+            if sampler is not None:
+                sampler.stop()
+            # Stop any lingering breath on shutdown so the LED strip
+            # doesn't stay mid-fade when uvicorn tears down.
+            breath_slot.shutdown()
+
+    app = FastAPI(title="LeLamp Dashboard", lifespan=_lifespan)
+    app.mount("/static", StaticFiles(directory=WEB_DIR, check_dir=False), name="static")
+
+    @app.get("/")
+    def index() -> FileResponse:
+        index_path = WEB_DIR / "index.html"
+        if not index_path.is_file():
+            raise HTTPException(status_code=404, detail="Dashboard UI not built yet.")
+        return FileResponse(
+            index_path,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
+    @app.get("/api/state")
+    def get_state() -> dict[str, object]:
+        return _state_snapshot_for_api(
+            store.snapshot(),
+            expose_transcripts=getattr(settings, "dashboard_expose_transcripts", False),
+        )
+
+    @app.get("/api/actions")
+    def get_actions() -> dict[str, object]:
+        busy = executor.is_busy()
+        active_action = executor.current_action()
+        snapshot = store.snapshot()
+        try:
+            recordings = bridge.list_recordings()
+        except Exception:
+            recordings = list(snapshot.get("motion", {}).get("available_recordings", []))
+
+        return {
+            "busy": busy,
+            "active_action": active_action,
+            "recordings": recordings,
+            "poll_ms": settings.dashboard_poll_ms,
+            "config": {
+                "dashboard_host": settings.dashboard_host,
+                "dashboard_port": settings.dashboard_port,
+                "poll_ms": settings.dashboard_poll_ms,
+            },
+            "actions": _action_catalog(
+                snapshot,
+                recordings,
+                busy=busy,
+                active_action=active_action,
+            ),
+            # Manual fallback (DEMO_PLAN §1.2) — the dashboard UI renders
+            # these as an extra row. `breath_running` lets the UI show a
+            # "stop breath" affordance; the JS doesn't hardcode styles.
+            "intervene": {
+                "styles": style_metadata(),
+                "breath_running": breath_slot.is_running(),
+            },
+        }
+
+    @app.post("/api/actions/startup")
+    def post_startup() -> JSONResponse:
+        return _receipt_response(motion_actions["startup"]())
+
+    @app.post("/api/actions/play")
+    def post_play(payload: dict[str, str]) -> JSONResponse:
+        name = payload.get("name")
+        if not name:
+            raise HTTPException(status_code=400, detail="Missing recording name.")
+        return _receipt_response(motion_actions["play"](name))
+
+    @app.post("/api/actions/shutdown_pose")
+    def post_shutdown_pose() -> JSONResponse:
+        return _receipt_response(motion_actions["shutdown_pose"]())
+
+    @app.post("/api/actions/stop")
+    def post_stop() -> JSONResponse:
+        return _receipt_response(motion_actions["stop"]())
+
+    @app.post("/api/lights/solid")
+    def post_solid(payload: dict[str, int]) -> JSONResponse:
+        required = ("red", "green", "blue")
+        if any(channel not in payload for channel in required):
+            raise HTTPException(status_code=400, detail="Missing RGB channel value.")
+        if any(
+            not isinstance(payload[channel], int) or isinstance(payload[channel], bool)
+            for channel in required
+        ):
+            raise HTTPException(status_code=400, detail="RGB values must be integers.")
+        if any(payload[channel] < 0 or payload[channel] > 255 for channel in required):
+            raise HTTPException(status_code=400, detail="RGB values must be between 0 and 255.")
+        return _receipt_response(
+            light_actions["solid"](payload["red"], payload["green"], payload["blue"])
+        )
+
+    @app.post("/api/lights/clear")
+    def post_clear() -> JSONResponse:
+        return _receipt_response(light_actions["clear"]())
+
+    @app.post("/api/actions/intervene")
+    def post_intervene(payload: dict[str, str]) -> JSONResponse:
+        """Manual fallback button — DEMO_PLAN §1.2.
+
+        Body: ``{"style": "shy" | "headshake" | "sad_nod"
+                          | "breath_moderate" | "breath_mild"}``
+
+        Motion styles return 202/409 like the rest of the executor-backed
+        routes. Breath styles return 202 on start and 500 if motor_bus is
+        unreachable.
+        """
+        style = payload.get("style")
+        if not style:
+            raise HTTPException(status_code=400, detail="Missing style.")
+        try:
+            receipt = intervene_action(style)
+        except KeyError:
+            raise HTTPException(status_code=400, detail=f"Unknown style: {style}")
+        return _receipt_response(receipt)
+
+    @app.post("/api/actions/intervene/stop")
+    def post_intervene_stop() -> JSONResponse:
+        """Stop any in-flight manual breath. Motion goes through executor
+        stop, not this route."""
+        stopped = breath_slot.stop()
+        return JSONResponse(
+            status_code=200,
+            content={"ok": True, "stopped": stopped},
+        )
+
+    # ── audio / voice controls ──
+
+    @app.post("/api/audio/volume")
+    def post_audio_volume(payload: dict[str, int]) -> JSONResponse:
+        percent = payload.get("percent")
+        if percent is None or not isinstance(percent, int) or percent < 0 or percent > 100:
+            raise HTTPException(status_code=400, detail="percent must be 0–100")
+        try:
+            subprocess.run(
+                ["amixer", "sset", "Line", f"{percent}%"],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        return JSONResponse(status_code=200, content={"ok": True, "volume_percent": percent})
+
+    @app.post("/api/voice/threshold")
+    def post_voice_threshold(payload: dict[str, object]) -> JSONResponse:
+        updates: dict[str, object] = {}
+        raw_db = payload.get("speech_threshold_db")
+        if raw_db is not None:
+            updates["speech_threshold_db"] = float(raw_db)
+        raw_noise = payload.get("noise_floor_db")
+        if raw_noise is not None:
+            updates["noise_floor_db"] = float(raw_noise)
+        if updates:
+            _write_voice_state(settings, updates)
+        return JSONResponse(status_code=200, content={"ok": True})
+
+    @app.post("/api/voice/calibrate")
+    def post_voice_calibrate(payload: dict[str, object] | None = None) -> JSONResponse:
+        enabled = True
+        if payload is not None:
+            enabled = bool(payload.get("enable", True))
+        _write_voice_state(settings, {
+            "calibration_enabled": enabled,
+            "calibration_progress": 0.0,
+        })
+        return JSONResponse(status_code=200, content={"ok": True, "calibration_enabled": enabled})
+
+    return app
+
+
+if __name__ == "__main__":
+    runtime_settings = load_runtime_settings()
+    uvicorn.run(
+        "lelamp.dashboard.api:create_app",
+        factory=True,
+        host=runtime_settings.dashboard_host,
+        port=runtime_settings.dashboard_port,
+    )
